@@ -1,8 +1,8 @@
 # LITERATURE REVIEW ARTICLES
-Dolgusevs et al (2024) - * Genomic and phenotypic inconsistencies in Pseudomonas aeruginosa resistome among intensive care patients. - https://doi.org/10.3389/fcimb.2024.1335096
-Durfey et al (2025) - *Pseudomonas infections persisting after CFTR modulators are widespread throughout the lungs and drive lung inflammation - DOI: 10.1016/j.chom.2025.07.009
-Dwight & Marshall (2021) – CFTR modulators: transformative therapies for cystic fibrosis. – https://doi.org/10.18553/jmcp.2021.27.2.281
-Edward et al (2024) – Phenotypic and molecular characterization of extended spectrum‑ and metallo‑beta‑lactamase producing Pseudomonas aeruginosa clinical isolates from Egypt. – https://doi.org/10.1007/s15010-024-02220-4
+Dolgusevs et al (2024) - * Genomic and phenotypic inconsistencies in Pseudomonas aeruginosa resistome among intensive care patients. - https://doi.org/10.3389/fcimb.2024.1335096  
+Durfey et al (2025) - *Pseudomonas infections persisting after CFTR modulators are widespread throughout the lungs and drive lung inflammation - DOI: 10.1016/j.chom.2025.07.009  
+Dwight & Marshall (2021) – CFTR modulators: transformative therapies for cystic fibrosis. – https://doi.org/10.18553/jmcp.2021.27.2.281  
+Edward et al (2024) – Phenotypic and molecular characterization of extended spectrum‑ and metallo‑beta‑lactamase producing Pseudomonas aeruginosa clinical isolates from Egypt. – https://doi.org/10.1007/s15010-024-02220-4  
 Feldgarden et al (2021) – AMRFinderPlus and the Reference Gene Catalog facilitate examination of the genomic links among antimicrobial resistance, stress response, and virulence. – https://doi.org/10.1038/s41598-021-91456-0
 Freschi et al (2019) – The Pseudomonas aeruginosa pan‑genome provides new insights on its population structure, horizontal gene transfer, and pathogenicity. – https://doi.org/10.1093/gbe/evy259
 Hadadi‑Fishani, Khaledi & Fatemi‑Nasab (2020) – Correlation between biofilm formation and antibiotic resistance in Pseudomonas aeruginosa: a meta‑analysis. – https://www.infezmed.it/media/journal/Vol_28_1_2020_8.pdf
