@@ -1,0 +1,58 @@
+# STAGE 1: DOWNLOADING GENOMES FROM BV-BRC
+
+# Purpose:
+   Automatically download Pseudomonas genomes from BV-BRC using
+   genome IDs listed in Genome_list.txt. Each genome is retrieved
+   via the BV-BRC API and saved as a FASTA (.fna) file.
+
+# Inputs:
+   - Genome_list.txt : one BV-BRC genome ID per line
+   - Internet-enabled compute node on Kelvin2
+
+# Outputs:
+#   - <genome_id>.fna files for each genome
+#   - slurm-<jobid>.out log file
+
+# Notes:
+#   - Some genome IDs may return 0-byte files if deprecated or restricted
+#   - Script uses wget to query BV-BRC API
+
+#!/bin/bash
+#SBATCH --time=06-23:59:59          # Maximum runtime (6 days)
+#SBATCH --partition=k2-lowpri,k2-bioinf   # Selected partitions
+#SBATCH --job-name=WGET_run         # Job name for tracking
+#SBATCH --mem=10G                   # Memory allocation
+#SBATCH --mail-user=kmagill102@qub.ac.uk  # Email notifications
+#SBATCH --mail-type=BEGIN,END,FAIL  # Notify on start, end, fail
+
+
+# Loop through each genome ID in Genome_list.txt
+# $G represents each genome ID read from the file
+while read G; do
+
+   echo "Downloading $G..."          # Print progress to SLURM log
+
+   # wget command:
+   # -q = quiet mode (no output except errors)
+   # -O = output filename (<genome_id>.fna)
+   # API query retrieves genome sequence in FASTA format
+   wget -q -O "${G}.fna" \
+   "https://www.bv-brc.org/api/genome_sequence/?eq(genome_id,${G})&http_accept=text/x-fasta"
+
+done < Genome_list.txt              # Feed genome list into loop
+
+
+# QUALITY CHECKS (run manually after job completes)
+
+# Count number of downloaded FASTA files
+# ls *.fna | wc -l
+
+# Identify any 0-byte FASTA files (failed downloads)
+# find . -name "*.fna" -size 0
+
+# Compare intended vs downloaded genomes
+# ls *.fna | sed 's/.fna//' > downloaded.txt
+# grep -Fxv -f downloaded.txt Genome_list.txt > missing.txt
+
+# END OF STAGE 1
+
