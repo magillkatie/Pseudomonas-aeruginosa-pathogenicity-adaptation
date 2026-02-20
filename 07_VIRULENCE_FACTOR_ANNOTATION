@@ -1,0 +1,129 @@
+# STAGE 7: Virulence gene detection using Abricate with the VFDB database
+
+# Purpose
+Screen all genomes for virulence-associated genes using Abricate (VFDB).  
+This stage was run twice due to a contig‑naming inconsistency between the original `.fna` files and the Bakta‑annotated FASTA files.
+
+The second run (using Bakta FASTA files) is the correct one and is used for downstream analysis.
+
+# Background
+Bakta renames contigs to a standardised format:
+contig_1
+contig_2
+contig_3
+However, the **original `.fna` files** from NCBI/assembly pipelines use original unique contig IDs:
+>accn|JAJDQS010000022
+>accn|JAUKHD010000041
+etc.
+
+Abricate reports contig names exactly as they appear in the input FASTA.  
+This caused a mismatch.`
+
+Downstream tools could not match contigs between Bakta and Abricate.
+
+Therefore, Abricate was re‑run using the **Bakta‑produced FASTA files**, ensuring consistent contig naming.
+
+# FIRST ATTEMPT (FAILED)
+### Abricate run on original `.fna` files  
+Contig names did **not** match Bakta output → results unusable.
+
+### SLURM script used:
+#!/bin/bash
+#SBATCH --job-name=abricate_vfdb   # JOB NAME FOR SLURM
+#SBATCH --partition=k2-lowpri,k2-bioinf  # QUEUE PARTIONS
+#SBATCH --time=2-23:59:00  # MAXIMUM RUNTIME
+#SBATCH --cpus-per-task=2  # CPUS REQUESTED
+#SBATCH --mem=40G  # MEMORY REQUESTED
+#SBATCH --output=abricate-%A.out  # OUTPUT LOG
+#SBATCH --error=abricate-%A.err  # ERROR LOG
+#SBATCH --mail-user=kmagill102@qub.ac.uk  # EMAIL NOTIFICATIONS
+#SBATCH --mail-type=BEGIN,END,FAIL
+#SBATCH --chdir=/mnt/scratch2/users/40355339/pseudomonasgenomes  # ENSURE JOB STARTS IN WORKING DIRECTORY
+
+GENOME_DIR="."                       # Directory containing original .fna files
+OUTDIR="abricate_vfdb_results"       # Output folder
+DB="vfdb"                            # Database to use (VFDB)
+mkdir -p "$OUTDIR"                   # Create output folder if missing
+
+for GENOME in "$GENOME_DIR"/*.fna; do    # Loop through all .fna files
+    OUTNAME=$(basename "$GENOME")        # Extract filename only
+    echo "Running Abricate on: $GENOME"  # Print progress
+    abricate --db "$DB" "$GENOME" > "$OUTDIR/${OUTNAME}.tsv"   # Run Abricate
+done                                     # End loop
+
+
+# Outcome
+- Abricate ran successfully  
+- Output `.tsv` files contained ASSEMBLER CONTIG IDS  
+- These DID NOT MATCH Bakta’s `contig_#` naming  
+- Downstream integration impaired
+
+* This run was discarded *
+
+
+# SECOND ATTEMPT (SUCCESSFUL)
+### Abricate run on Bakta‑produced FASTA files 
+Contig names now matched (`contig_1`, `contig_2`,etc) → results usable.
+
+### SLURM script used:
+
+#!/bin/bash
+#SBATCH --job-name=abricate_vfdb
+#SBATCH --partition=k2-lowpri,k2-bioinf
+#SBATCH --time=2-23:59:00
+#SBATCH --cpus-per-task=2
+#SBATCH --mem=40G
+#SBATCH --output=abricate-%A.out
+#SBATCH --error=abricate-%A.err
+#SBATCH --mail-user=kmagill102@qub.ac.uk
+#SBATCH --mail-type=BEGIN,END,FAIL
+
+GENOME_DIR="."
+OUTDIR="abricate_vfdb_results"
+DB="vfdb"
+mkdir -p "$OUTDIR"
+
+for GENOME in "$GENOME_DIR"/*.fna; do
+    OUTNAME=$(basename "$GENOME")
+    echo "Running Abricate on: $GENOME"
+    abricate --db "$DB" "$GENOME" > "$OUTDIR/${OUTNAME}.tsv"
+done
+
+# Outcome
+- Abricate ran successfully  
+- Contig names matched Bakta output  
+- Results were consistent and ready for further analysis 
+- These results were used for subsequent stages  
+
+---
+
+# Output Structure
+
+abricate_vfdb_results/
+    genome1.fna.tsv
+    genome2.fna.tsv
+    genome3.fna.tsv
+
+Each `.tsv` file contains:
+FILE - The filename this hit came from
+SEQUENCE - The sequence in the filename
+START - 	Start coordinate in the sequence
+END - 	End coordinate
+STRAND - Strand + or -
+GENE - gene name
+COVERAGE - What proportion of the gene is in our sequence
+COVERAGE_MAP -	A visual represenation of the hit. ==aligned, .=unaligned, /=has_gaps
+GAPS - Openings / gaps in subject and query - possible psuedogene?
+%COVERAGE -	Proportion of gene covered
+%IDENTITY -	Proportion of exact nucleotide matches in the covered part
+DATABASE - The database this sequence comes from
+ACCESSION - The genomic source of the sequence
+PRODUCT - Gene product (if available)
+
+
+# Notes
+- Only the second run of abricate is used in the pipeline.  
+- The first run is documented for transparency.  
+- This stage ensures all virulence gene hits align with Bakta annotations.
+
+# END OF STAGE 7
