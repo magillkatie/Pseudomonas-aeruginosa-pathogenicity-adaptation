@@ -1,0 +1,62 @@
+# STAGE 6 — Removal of Outliers / Anomalies  
+### Based on Stage 5 ANI Heatmap + Outlier Detection
+
+# Purpose
+Remove genomes that are too divergent, isolated, or statistically inconsistent with the majority.  
+This prevents contamination, misclassification, and extreme outliers from distorting pangenome analysis.
+
+# Inputs
+- `my_analysis_outliers.txt` (from Stage 5)
+- Full genome set (FASTA files)
+- Manual review of:
+  - mean ANI
+  - max ANI
+  - number of outlier‑detection methods triggered
+
+# Removal Criteria
+A genome was removed if it met EITHER of the following:
+
+1. **Triggered all three outlier methods**  
+   - low mean ANI (bottom 5%)  
+   - low maximum ANI (bottom 5%)
+   - statistical outlier
+
+2. **Had mean ANI < 50%**  
+   - biologically too divergent.
+
+These criteria ensure only clear anomalies are removed.
+
+# Number of Genomes Removed
+A total of 17 genomes were identified as anomalies and removed from the main dataset.
+
+# Folder Structure
+Anomalous genomes were moved into:
+anomalies/
+
+The decision was made to move rather than remove file to preserve them for record‑keeping while excluding them from downstream analysis.
+
+# Commands Used
+Genomes were moved **one by one**, manually, using:
+
+mv genome_name.fna anomalies/
+This was repeated for all 17 anomalous genomes.
+
+# Verification
+After moving each genome:
+```bash
+ls anomalies/
+```
+To confirm the genome was removed from the main directory:
+
+To count remaining genomes:
+
+```bash
+ls *.fna | wc -l
+```
+
+# Outputs
+- `anomalies/` — contains the 17 removed genomes  
+- Cleaned working directory containing only high‑quality genomes  
+- Updated genome count for pangenome analysis
+
+# END OF STAGE 6
