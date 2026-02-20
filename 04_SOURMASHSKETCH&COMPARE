@@ -1,0 +1,18 @@
+# STAGE 3: GENOME COMPARISON WITH SOURMASH
+
+# Purpose:
+#    Generate MinHash sketches for all Pseudomonas aeruginosa genomes & undertake pairwise comparison.
+#    similarity testing and quality control using sourmash compare, and attempt to visualize distances.
+#    This stage includes sketching, comparing, and plotting steps.
+
+# Inputs:
+#    - *.fna genome files from Stage 1
+#    - Sourmash conda environment (v4.9.4)
+#    - Sufficient memory for large comparison matrices
+
+# Outputs:
+#    - Pseudomonas_sourmash/*.sig.gz  (sketch files)
+#    - distances (similarity matrix)
+#    - distances.labels.txt (sample list in plain text)
+
+
