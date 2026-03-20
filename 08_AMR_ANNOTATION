@@ -1,5 +1,5 @@
 
-# STAGE 3: ANTIMICROBIAL RESISTANCE GENE DETECTION WITH AMRFINDERPLUS
+# STAGE 7: ANTIMICROBIAL RESISTANCE GENE DETECTION WITH AMRFINDERPLUS
 
 # Purpose:
 #   Screen all annotated genomes for antimicrobial resistance (AMR) genes.
@@ -42,19 +42,11 @@
 #   - AMRFinderPlus is run in complete mode.
 #   - The -a bakta flag tells AMRFinderPlus that annotations were produced by Bakta,ensuring correct parsing of the GFF3 format.
 #   - Providing all three input types (-n nucleotide, -p protein, -g annotation) enables AMRFinderPlus to use both protein searches and HMM-based nucleotide searches, maximising sensitivity.
-#   - SLURM array indexing is used to parallelise across genomes (same strategy as
-#     Stage 2); each array task processes a batch of up to 100 genomes.
-#   - Array range set to 1-58 reflecting the number of annotated genomes available
-#     after Stage 2.
-#   - --cpus-per-task=4 is used here (rather than --ntasks=16 in Stage 2) as
-#     AMRFinderPlus is less memory/CPU intensive than Bakta.
-#   - Output TSV files are named by genome basename to allow straightforward merging
-#     and traceability in downstream steps.
-#   - If a genome is missing its corresponding .faa or .gff3 file, AMRFinderPlus
-#     will error for that sample; check .err logs if output files are absent.
-#   - Runtime is substantially faster than Bakta; most genomes complete in minutes.
-#   - AMRFinderPlus database version should be recorded alongside software version
-#     for reproducibility — check with: amrfinder --version and amrfinder --database_version
+#   - SLURM array indexing is used to parallelise across genomes (same strategy as Stage 2); each array task processes a batch of up to 100 genomes.
+#   - Array range set to 1-58 reflecting the number of annotated genomes available after Stage 2.
+#   - --cpus-per-task=4 is used here (rather than --ntasks=16 in Stage 2) as AMRFinderPlus is less CPU intensive than Bakta.
+#   - Output TSV files are named by genome basename for traceability.
+#   - Runtime is substantially faster than Bakta.
 
 # Software version:
 #   - AMRFinderPlus v4.0.15
@@ -112,18 +104,8 @@ done
 #       ls -1 amrfinder_results/*.tsv | wc -l
 #       (should equal the number of input genomes)
 #
-#   Check for empty output files (may indicate a failed run):
-#       find amrfinder_results/ -name "*.tsv" -empty
-#
 #   Quick count of total AMR hits across all genomes:
 #       cat amrfinder_results/*.tsv | grep -v "^Protein" | wc -l
 #
-#   Check AMRFinderPlus software and database versions used:
-#       amrfinder --version
-#       amrfinder --database_version
-#
-#   Inspect error logs for any failed samples:
-#       grep -i "error" AMR_Pseudomonas-*.err
-
 # END OF STAGE 3
-```
+
