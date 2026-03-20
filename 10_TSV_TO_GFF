@@ -1,0 +1,121 @@
+# STAGE 9: TSV TO GFF3 CONVERSION WITH ORForise
+
+# Purpose:
+#   Convert per-genome TSV output files from Abricate and AMRFinderPlus into GFF3 format using ORForise Convert_To_GFF.
+#   This conversion is a required preprocessing step before merging resistance and virulence gene annotations with the Bakta structural annotations.
+
+# Background:
+#   Bakta (Stage 2) produces GFF3 files containing structural genome annotations (CDS, rRNA, tRNA, etc.). 
+#   AMRFinderPlus (Stage 7) and Abricate (stage 6) produce TSV-format resistance and virulence gene calls that are not directly compatible with GFF3-based pangenome tools. 
+
+# Inputs:
+#   ABRICATE CONVERSION:
+#   - *.fna.tsv  — Abricate result files (one per genome, named <genome_id>.fna.tsv)
+#   - *.fna      — Corresponding nucleotide genome FASTA files (required by ORForise
+#                  for coordinate validation)
+#   AMRFINDER CONVERSION:
+#   - *_amrfinder.tsv — AMRFinderPlus result files (one per genome,named <genome_id>_amrfinder.tsv)
+#   - *.fna           — Corresponding nucleotide genome FASTA files
+#   BOTH SCRIPTS REQUIRE:
+#   - ORForise installed and accessible via Python module path
+
+# Outputs:
+#   - result_gff/ directory (created by each script) containing:
+#       - <genome_id>.gff  — GFF3-format annotation file converted from Abricate TSV
+#       - <genome_id>.gff  — GFF3-format annotation file converted from AMRFinderPlus TSV
+#   These GFF3 files are subsequently merged with Bakta GFF3 outputs to produce a single combined annotation file per genome for pangenome analysis.
+
+# Notes:
+#   - Two separate scripts are run sequentially — one for Abricate TSVs and one for AMRFinderPlus TSVs.
+#   - ORForise requires the input format to be specified explicitly via the -fmt flag (abricate or amrfinder).
+#   - The -fmt flag is critical: it tells ORForise how to parse column headers and map coordinates correctly for each tool's TSV. 
+#   - The corresponding .fna file must be present in the working directory alongside each TSV.
+#   - PYTHONPATH is explicitly exported to ensure ORForise is found in the user's local Python package directory.
+#   - These scripts use simple for loops rather than SLURM array indexing, as the conversion step is lightweight and completes quickly even for large genome sets.
+#   - Both scripts write output into a directory named result_gff/; if running both scripts from the same working directory, ensure output filenames do not match.
+#   — check that Abricate and AMRFinderPlus GFF outputs are distinguished either by naming convention or by using separate output directories.
+
+# Software:
+#   - ORForise (Convert_To_GFF module) — installed via pip into home directory
+#   - Python 3.12
+
+## SCRIPT 5A — ABRICATE TSV TO GFF3 CONVERSION
+
+#!/bin/bash
+#SBATCH --job-name=orforise_convert              # Job name visible in SLURM queue
+#SBATCH --partition=k2-lowpri,k2-bioinf          # Queue/partition (two queues for flexibility)
+#SBATCH --time=23:59:59                          # Maximum runtime (24 hours)
+#SBATCH --cpus-per-task=2                        # CPU threads (lightweight conversion task)
+#SBATCH --mem=40G                                # Memory allocation
+#SBATCH --output=ORF-%A-%a.out                   # Standard output log
+#SBATCH --error=ORF-%A-%a.err                    # Error log
+#SBATCH --mail-user=kmagill102@qub.ac.uk         # Email notifications
+#SBATCH --mail-type=BEGIN,END,FAIL               # Email on job start, end, and failure
+
+# Ensure ORForise is discoverable in user's local Python package directory
+export PYTHONPATH=/users/40355339/.local/lib/python3.12/site-packages:$PYTHONPATH
+
+mkdir -p result_gff                              # Create output directory if not already present
+
+# Loop through all Abricate TSV files in the working directory
+for f in *.fna.tsv; do
+    base=$(basename "$f" .fna.tsv)               # Strip .fna.tsv to get genome ID
+
+    python -m ORForise.Convert_To_GFF \
+        -dna ${base}.fna \                       # Nucleotide FASTA for coordinate validation
+        -i ${base}.fna.tsv \                     # Abricate TSV input file
+        -fmt abricate \                          # Specify input format as Abricate
+        -o result_gff                            # Output directory for converted GFF3 files
+done
+
+## SCRIPT 5B — AMRFINDER PLUS TSV TO GFF3 CONVERSION
+
+#!/bin/bash
+#SBATCH --job-name=orforise_convert              # Job name visible in SLURM queue
+#SBATCH --partition=k2-lowpri,k2-bioinf          # Queue/partition (two queues for flexibility)
+#SBATCH --time=23:59:59                          # Maximum runtime (24 hours)
+#SBATCH --cpus-per-task=2                        # CPU threads (lightweight conversion task)
+#SBATCH --mem=40G                                # Memory allocation
+#SBATCH --output=ORF-%A-%a.out                   # Standard output log
+#SBATCH --error=ORF-%A-%a.err                    # Error log
+#SBATCH --mail-user=kmagill102@qub.ac.uk         # Email notifications
+#SBATCH --mail-type=BEGIN,END,FAIL               # Email on job start, end, and failure
+
+# Ensure ORForise is discoverable in user's local Python package directory
+export PYTHONPATH=/users/40355339/.local/lib/python3.12/site-packages:$PYTHONPATH
+
+mkdir -p result_gff                              # Create output directory if not already present
+
+# Loop through all AMRFinderPlus TSV files in the working directory
+for f in *_amrfinder.tsv; do
+    base=$(basename "$f" _amrfinder.tsv)         # Strip _amrfinder.tsv to get genome ID
+
+    python -m ORForise.Convert_To_GFF \
+        -dna ${base}.fna \                       # Nucleotide FASTA for coordinate validation
+        -i ${base}_amrfinder.tsv \               # AMRFinderPlus TSV input file
+        -fmt amrfinder \                         # Specify input format as AMRFinderPlus
+        -o result_gff                            # Output directory for converted GFF3 files
+done
+
+# QUALITY CHECKS (run manually after both scripts complete)
+#   Count GFF files produced by each conversion:
+#       ls -1 result_gff/*.gff | wc -l
+#       (total should equal sum of Abricate + AMRFinderPlus input files)
+#
+#   Check for empty GFF output files:
+#       find result_gff/ -name "*.gff" -empty
+#
+#   Spot-check a converted GFF for correct formatting:
+#       head -20 result_gff/<genome_id>.gff
+#       (should begin with ##gff-version 3 header and contain tab-separated fields)
+#
+#   Verify contig IDs in GFF match those in the corresponding .fna file:
+#       grep -v "^#" result_gff/<genome_id>.gff | cut -f1 | sort -u
+#       grep "^>" <genome_id>.fna | sed 's/>//' | cut -d' ' -f1 | sort -u
+#       (outputs should match)
+#
+#   Inspect error logs for any failed conversions:
+#       grep -i "error" ORF-*.err
+
+# END OF STAGE 5
+````
