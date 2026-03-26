@@ -1,0 +1,146 @@
+
+# P. aeruginosa Biofilm & AMR Analysis
+# Hypothesis: Biofilm tolerance, not acquired AMR, underlies AST failure
+# Input: gene_presence_absence_annotated.csv (Pyamilyseq output)
+
+
+#  1. PACKAGES 
+library(tidyverse)
+library(patchwork)
+
+# 2. LOAD DATA 
+# Last 2 columns (GENE_TYPE, eggnog) are metadata — excluded from genome matrix
+pav <- read.csv("~/Downloads/gene_presence_absence_annotated.csv",
+                check.names = FALSE)
+
+dim(pav) #Prints rows and columns
+head(names(pav)) #Prints column names
+
+genome_cols <- pav[, 15:(ncol(pav) - 2)]
+n_isolates  <- ncol(genome_cols)
+
+cat("Isolates loaded:", n_isolates, "\n")   # expected: 1376
+cat("Gene rows loaded:", nrow(pav), "\n")
+
+# ── 3. AMR GENE FREQUENCY ──────────────────────────────────────────────────────
+# AMR genes are flagged with _AMR suffix in the Gene column
+amr_rows <- grepl("_AMR", pav$Gene, ignore.case = TRUE)
+cat("Total AMR gene rows:", sum(amr_rows), "\n")
+
+amr_freq <- data.frame(
+    Gene    = pav$Gene[amr_rows],
+    Count   = rowSums(genome_cols[amr_rows, ] != "" &
+                      !is.na(genome_cols[amr_rows, ])),
+    Percent = round(rowSums(genome_cols[amr_rows, ] != "" &
+                            !is.na(genome_cols[amr_rows, ])) /
+                    n_isolates * 100, 1)
+) %>% arrange(desc(Percent))
+
+# Core AMR genes = present in >=95% of isolates (threshold accounts for
+# annotation inconsistencies across gene families)
+amr_freq[amr_freq$Percent >= 95, ]
+# Result: 5 core intrinsic AMR genes identified
+
+# ── 4. CORE vs ACQUIRED AMR ────────────────────────────────────────────────────
+core_amr_names <- c("group_534_amr", "group_3402_amr", "group_3562_amr",
+                    "group_4205_amr", "group_4713_amr")
+
+# Count total AMR genes per isolate
+total_amr_counts <- colSums(
+    genome_cols[amr_rows, ] != "" & !is.na(genome_cols[amr_rows, ])
+)
+
+# Count core AMR genes per isolate
+core_rows <- pav$Gene %in% core_amr_names
+core_amr_counts <- colSums(
+    genome_cols[core_rows, ] != "" & !is.na(genome_cols[core_rows, ])
+)
+
+# Isolates where total AMR = core AMR = no acquired genes
+ast_blind_spot_amr <- names(total_amr_counts[total_amr_counts == core_amr_counts])
+
+cat("Isolates with ONLY core AMR genes:", length(ast_blind_spot_amr), "\n")
+cat("Out of total isolates:", n_isolates, "\n")
+cat("Percentage:", round(length(ast_blind_spot_amr) / n_isolates * 100, 1), "%\n")
+# Result: 832 isolates (60.5%)
+
+# ── 5. BIOFILM GENE FREQUENCY ──────────────────────────────────────────────────
+# Biofilm genes are annotated with "(biofilm)" in the eggnog column
+# Note: same gene may be split across multiple rows in Panaroo output —
+# an isolate is counted as present if the gene appears in ANY of its rows
+biofilm_rows  <- grepl("\\(biofilm\\)", pav$eggnog, ignore.case = TRUE)
+biofilm_genes <- pav$eggnog[biofilm_rows]
+biofilm_mat   <- genome_cols[biofilm_rows, ]
+
+cat("Total biofilm gene rows:", sum(biofilm_rows), "\n")
+
+unique_biofilm <- unique(biofilm_genes)
+
+biofilm_freq <- do.call(rbind, lapply(unique_biofilm, function(gene) {
+    rows    <- biofilm_mat[biofilm_genes == gene, , drop = FALSE]
+    present <- colSums(rows != "" & !is.na(rows)) > 0
+    data.frame(
+        Gene    = gene,
+        Count   = sum(present),
+        Percent = round(sum(present) / n_isolates * 100, 1)
+    )
+})) %>% arrange(desc(Percent))
+
+cat("Core biofilm genes (>=95%):", sum(biofilm_freq$Percent >= 95), "\n")
+# Result: 28 core biofilm genes (98.8-99.7% prevalence)
+# Additional 11 psl genes present in 92.0-93.8% of isolates
+# Total: 39 unique biofilm genes
+print(biofilm_freq)
+# ── 6. COLLAPSE BIOFILM MATRIX & IDENTIFY AST BLIND SPOT ──────────────────────
+# Pre-compute presence/absence matrix for biofilm rows
+biofilm_present_mat <- genome_cols[biofilm_rows, ] != "" &
+                       !is.na(genome_cols[biofilm_rows, ])
+
+# Collapse multi-row genes into a single presence/absence matrix
+# Rows = unique genes, Columns = isolates
+# An isolate is marked TRUE if the gene appears in ANY of its rows
+biofilm_collapsed <- do.call(rbind, lapply(unique_biofilm, function(gene) {
+    rows <- biofilm_present_mat[biofilm_genes == gene, , drop = FALSE]
+    colSums(rows) > 0
+}))
+rownames(biofilm_collapsed) <- unique_biofilm
+
+# Isolates with ALL 39 biofilm genes present
+complete_biofilm <- colSums(biofilm_collapsed) == length(unique_biofilm)
+
+cat("Isolates with all", length(unique_biofilm), "biofilm genes:", sum(complete_biofilm), "\n")
+cat("Percentage:", round(sum(complete_biofilm) / n_isolates * 100, 1), "%\n")
+# Result: 1185 isolates (86.1%)
+
+# Count acquired AMR genes per isolate
+# Acquired = any AMR gene beyond the core 5
+acquired_rows   <- amr_rows & !(pav$Gene %in% core_amr_names)
+acquired_counts <- colSums(
+    genome_cols[acquired_rows, ] != "" & !is.na(genome_cols[acquired_rows, ])
+)
+
+# Build per-isolate summary dataframe
+isolate_df <- data.frame(
+    Isolate              = names(genome_cols),
+    Acquired_AMR         = as.numeric(acquired_counts),
+    All_Biofilm_Complete = complete_biofilm
+)
+
+# AST Blind Spot = no acquired AMR genes AND all 39 biofilm genes present
+# These isolates would test as susceptible by AST but carry the full
+# biofilm gene repertoire — biofilm tolerance likely underlies treatment failure
+ast_blind_spot <- isolate_df %>%
+    filter(Acquired_AMR == 0 & All_Biofilm_Complete == TRUE)
+
+cat("\n══ KEY FINDINGS ══════════════════════════════════════\n")
+cat("Total isolates:                    ", n_isolates, "\n")
+cat("Isolates with no acquired AMR:     ",
+    sum(isolate_df$Acquired_AMR == 0),
+    sprintf("(%.1f%%)\n", sum(isolate_df$Acquired_AMR == 0) / n_isolates * 100))
+cat("Isolates with all 39 biofilm genes:",
+    sum(isolate_df$All_Biofilm_Complete),
+    sprintf("(%.1f%%)\n", sum(isolate_df$All_Biofilm_Complete) / n_isolates * 100))
+cat("AST Blind Spot (both):             ",
+    nrow(ast_blind_spot),
+    sprintf("(%.1f%%)\n", nrow(ast_blind_spot) / n_isolates * 100))
+cat("══════════════════════════════════════════════════════\n")
