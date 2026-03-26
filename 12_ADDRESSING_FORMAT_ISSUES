@@ -1,0 +1,124 @@
+# STAGE 11: GFF ID NORMALISATION & DUPLICATE RESOLUTION
+
+# Purpose:
+#   ORForise produces placeholder IDs (Original_Annotation, Additional_Annotation) and tool‑specific metadata that must be converted into stable, unique identifiers before pangenome analysis.
+#   Additionally, Abricate and AMRFinderPlus annotations may produce duplicate IDs across genomes, requiring file‑specific prefixing. 
+#   This stage applies a series of ID‑normalisation steps to ensure all GFF3 files contain:
+#       - biologically meaningful IDs
+#       - tool‑specific prefixes/suffixes
+#       - genome‑specific prefixes to guarantee uniqueness
+#
+# Background:
+#   ORForise merges annotations from Bakta, Abricate, and AMRFinderPlus. However:
+#       - Bakta features are labelled as ID=Original_Annotation
+#       - Abricate/AMRFinderPlus features are labelled as ID=Additional_Annotation
+#       - Some annotations use Consensus=, others use Tool=
+#       - IDs may collide across genomes unless prefixed
+#
+#   This stage applies four sequential scripts to fully normalise IDs.
+
+# Inputs:
+#   - *.gff files produced by ORForise GFF_Adder
+#
+# Outputs:
+#   - *_updated.gff      (placeholder IDs replaced with meaningful IDs)
+#   - *_2.gff            (tool prefixes added for Consensus= cases)
+#   - *.fixed2.gff       (file‑specific prefixes added to ensure uniqueness)
+#   - *.final.gff        (tool suffixes added for Tool= cases)
+
+# Software:
+#   - awk
+#   - sed
+#   - bash
+
+# SCRIPT 11A — FIX ORForise PLACEHOLDER IDs (Original_Annotation / Additional_Annotation)
+
+# Purpose:
+#   Replace ORForise placeholder IDs with meaningful identifiers:
+#       - Bakta → locus_tag
+#       - Abricate → accession
+#       - AMRFinderPlus → closest_acc
+#
+# Output:
+#   <file>_updated.gff
+
+for i in *gff; do
+awk -F '\t' 'BEGIN{OFS="\t"} {
+
+  # Bakta structural annotations
+  if ($9 ~ /ID=Original_Annotation/ && $9 ~ /locus_tag=/) {
+    val = $9
+    sub(/.*locus_tag=/, "", val)
+    sub(/;.*/, "", val)
+    sub(/ID=Original_Annotation/, "ID=" val, $9)
+    sub(/;ID=[^;]+/, "", $9)
+  }
+
+  # Abricate annotations
+  else if ($9 ~ /ID=Additional_Annotation/ && $9 ~ /Tool=abricate/) {
+    val = $9
+    sub(/.*Add_attrs=accession=/, "", val)
+    sub(/;.*/, "", val)
+    sub(/ID=Additional_Annotation/, "ID=" val, $9)
+    sub(/;ID=[^;]+/, "", $9)
+  }
+
+  # AMRFinderPlus annotations
+  else if ($9 ~ /ID=Additional_Annotation/ && $9 ~ /Tool=amrfinder/) {
+    val = $9
+    sub(/.*closest_acc=/, "", val)
+    sub(/;.*/, "", val)
+    sub(/ID=Additional_Annotation/, "ID=" val, $9)
+    sub(/;ID=[^;]+/, "", $9)
+  }
+
+  print
+}' "$i" > "${i%%.gff}_updated.gff"
+done
+
+
+# SCRIPT 11B — ADD TOOL PREFIXES FOR Consensus= CASES
+# Purpose:
+#   Some ORForise annotations use Consensus=abricate or Consensus=amrfinder.
+#   This script adds tool‑specific prefixes to IDs for those cases only.
+#
+# Output:
+#   <file>_2.gff
+
+for i in *updated.gff; do
+awk -F'\t' 'BEGIN{OFS="\t"}
+$9 ~ /Consensus=amrfinder/ { sub(/ID=/,"ID=amrfinder_",$9) }
+$9 ~ /Consensus=abricate/  { sub(/ID=/,"ID=abricate_",$9) }
+{print}' "$i" > "${i%%.gff}_2.gff"
+done
+
+# SCRIPT 11C — ADD FILE‑SPECIFIC PREFIXES TO GUARANTEE GLOBAL UNIQUENESS
+
+# Purpose:
+#   Even after fixing IDs, Abricate and AMRFinderPlus may produce identical IDs across genomes. This script prefixes every ID and Parent with the genome name.
+#
+# Output:
+#   <file>.fixed2.gff
+
+for gff in *_2.gff; do
+    prefix=$(basename "$gff" .gff | tr '.' '_')
+    sed "/^#/! s/ID=/ID=${prefix}_/g; /^#/! s/Parent=/Parent=${prefix}_/g" \
+        "$gff" > "${gff%.gff}.fixed2.gff"
+done
+
+# SCRIPT 11D — ADD TOOL SUFFIXES FOR Tool= CASES
+# Purpose:
+#   Some annotations do not use Consensus= and instead use Tool=abricate or Tool=amrfinder.
+#   This script appends a tool‑specific suffix to IDs for those cases.
+#
+# Output:
+#   <file>.final.gff
+
+for i in *.fixed2.gff; do
+    awk -F'\t' 'BEGIN{OFS="\t"}
+    $9 ~ /Tool=amrfinder/ { sub(/ID=([^;]+)/, "&_amrfinder", $9) }
+    $9 ~ /Tool=abricate/  { sub(/ID=([^;]+)/, "&_abricate",  $9) }
+    {print}' "$i" > "${i//.fixed2/.final}"
+done
+
+# END OF STAGE 11
