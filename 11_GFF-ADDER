@@ -1,0 +1,93 @@
+# STAGE 10: MERGING BAKTA, ABRICATE, AND AMRFINDERPLUS GFFs WITH ORForise
+
+# Purpose:
+#   Combine structural genome annotations from Bakta with functional annotations from Abricate and AMRFinderPlus into a single unified GFF3 file per genome.
+#   These merged GFFs are required for pangenome workflows that expect one GFF per genome containing all features.
+
+# Background:
+#   Bakta produces high‑quality structural annotations (*.gff3).
+#   Abricate and AMRFinderPlus produce tsv files containing AMR/virulence hits,separate from the structural annotation.
+#   AMRFinderPlus and Abricate tsvs have already been converted to GFF in Stage 9.
+#   ORForise (GFF_Adder module) allows merging multiple annotation sources into a single non‑redundant GFF3 file, resolving overlaps and preserving metadata.
+
+# Inputs:
+#   For each genome <ID>:
+#       - <ID>.fna                 — genome FASTA
+#       - <ID>.gff3                — Bakta structural annotation
+#       - <ID>_amrfinder.gff       — AMRFinderPlus GFF output (from ORForise convert-to-GFF
+#       - <ID>.fna.gff             — Abricate GFF output(from ORForise convert-to-GFF)
+#
+#   All files must be present in the working directory before running the script.
+
+# Outputs:
+#   - GFF_MERGED/<ID>_merged.gff   — unified GFF3 file per genome containing:
+#         * Bakta structural features
+#         * AMRFinderPlus AMR gene calls
+#         * Abricate virulence hits
+#
+#   These merged GFFs are used directly as input to pangenome tools (Panaroo,Roary,Pyamilyseq etc.).
+
+# Notes:
+#   - ORForise merges annotations based on coordinate overlap.
+#   - The --olap parameter controls the minimum % overlap required to merge features (here set to 90%).
+#   - The -at flag specifies which annotation types are being added.
+#   - The -add flag lists the GFF files to merge into the reference.
+#   - Bakta GFF3 is always used as the reference (-ref).
+#   - This script loops over all *.fna files in the directory.
+#   - Output directory GFF_MERGED/ is created.
+
+# Software:
+#   - ORForise (GFF_Adder module)
+#   - Python 3.12
+#   - SLURM HPC environment (Kelvin2)
+
+## SCRIPT 10 — MERGE BAKTA + ABRICATE + AMRFINDERPLUS GFFs
+
+#!/bin/bash
+#SBATCH --time=23:59:00                 #Allow job to run up to 24 hours
+#SBATCH --partition=k2-lowpri,k2-bioinf #Submit to queue
+#SBATCH --mem=25G                       #Memory allocation
+#SBATCH --job-name=ORF_MERGE            #Job name in slurm queue
+#SBATCH --output=ORF-%j.out             #output log (%j = job ID)
+#SBATCH --error=ORF-%j.err              #error log
+#SBATCH --mail-user=kmagill102@qub.ac.uk #Email notifications
+#SBATCH --mail-type=BEGIN,END,FAIL      #Notify on job start, end, or failure
+
+PYTHONPATH=/users/40355339/.local/lib/python3.12/site-packages:$PYTHONPATH   #Ensure ORForise is discoverable
+
+mkdir -p GFF_MERGED                     #Create output directory for merged GFFs
+
+for f in *.fna; do                      #Loop through all genome FASTA files
+    id=$(basename "$f" .fna)            #Extract genome ID (remove .fna extension)
+
+    dna="${id}.fna"                     #Path to genome FASTA (required by ORForise)
+    ref="${id}.gff3"                    #Bakta structural annotation (reference GFF)
+    amr="${id}_amrfinder.gff"           #AMRFinderPlus annotation file
+    abr="${id}.fna.gff"                 #Abricate annotation file
+
+    python -m ORForise.GFF_Adder \      #Run ORForise GFF adder.
+        -dna "$dna" \                   #Provide genome FASTA for coordinate validation
+        -ref "$ref" \                   #Use Bakta GFF as the base annotation
+        -at amrfinder,abricate \        #Annotation types being added
+        -add "$amr","$abr" \            #GFF files to merge into the reference
+        --olap 90 \                     #Require 90% overlap to merge features
+        -o "GFF_MERGED/${id}_merged.gff" #Output merged GFF for this genome
+
+    echo "Finished $id"                 #Print progress message
+done                                    #End loop
+
+# END OF SCRIPT 10
+
+
+# QUALITY CHECKS (recommended after job completion):
+#   - Count merged GFFs:
+#         ls -1 GFF_MERGED/*.gff | wc -l
+#
+#   - Inspect a merged file:
+#         head -20 GFF_MERGED/<ID>_merged.gff
+#
+#   - Verify contig names match the .fna file:
+#         grep -v "^#" GFF_MERGED/<ID>_merged.gff | cut -f1 | sort -u
+#         grep "^>" <ID>.fna | sed 's/>//' | cut -d' ' -f1 | sort -u
+#
+# END OF STAGE 10
