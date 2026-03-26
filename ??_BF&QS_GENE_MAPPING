@@ -1,0 +1,132 @@
+
+# STEP 1: ANNOTATION
+# Takes raw Pyamilyseq output and labels AMR, virulence, and biofilm genes
+# Input:  gene_presence_absence_py.csv      (raw Pyamilyseq output)
+#         biofilm_protein_ids.csv           (biofilm reference file)
+# Output: gene_presence_absence_annotated.csv (annotated, used for analysis)
+# CREATION OF BIOFILM REFERENCE FILE
+
+# Purpose:
+#   To build a curated list of biofilm‑associated protein IDs for downstream annotation of the pangenome matrix. 
+#   This reference file is used to identify biofilm‑related orthologous groups (OGs) across all isolates.
+
+# Overview:
+#   1. A set of known biofilm genes of interest was selected (e.g.,AlgA, PelA,etc.).
+#   2. Each reference protein sequence was submitted to EggNOG‑mapper to obtain the most specific orthologous group (OG) assignment available.
+#   3. These OG identifiers were then used to grep the full EggNOG annotation output from the pangenome dataset.
+#   4. All matching rows (i.e., all proteins assigned to those OGs across all genomes) were extracted and written into a combined reference file.
+#   5. The resulting file was transferred to the local computer (Mac) for use in R.
+
+# Detailed steps:
+
+#  1. Run each biofilm reference sequence through EggNOG‑mapper 
+#   - Input: FASTA sequences of known biofilm genes (obtained from NCBI 'protein' database.
+#   - Output: EggNOG annotation table containing OG assignments.
+#   - The “most specific OG” (usually taxon‑specific OG) was recorded.
+
+# 2. Identify OGs associated with biofilm genes
+#   Example:
+#       Gene:AlgA
+#       EggNOG output:1YEUC@136841
+#       → This OG becomes the search key.
+
+# 3. Extract all proteins in the pangenome belonging to these OGs 
+#   Using grep on the EggNOG annotation output:
+#
+#       grep "1YEUC@136841" *.emapper.annotations >>  biofilm_protein_ids.csv
+
+#   - Each grep command appends matching rows to a single file.
+#   - echo statements were used to label sections where needed.
+#   - This process was repeated for every biofilm‑associated OG.
+
+
+#  4. Transfer the file to computer
+#   - The CSV was copied from the HPC environment to a Mac laptop.
+#   - This file is then loaded in R.
+
+# Output:
+#   biofilm_protein_ids.csv
+#   Contains:
+#       - protein_id       (e.g., CDELEI_01503)
+#       - gene             (biofilm gene name)
+
+#   This file is used in the R script below to label biofilm‑associated genes within the pangenome.
+
+# 1. PACKAGES 
+library(tidyverse)
+
+# 2. LOAD PANGENOME OUTPUT
+pav <- read.csv("~/Downloads/gene_presence_absence_py.csv",
+                header = TRUE, check.names = FALSE, stringsAsFactors = FALSE)
+
+cat("Dimensions:", dim(pav), "\n")         # expected: 73272 x 1390
+cat("First isolate column:", names(pav)[15], "\n")
+
+genome_cols <- pav[, 15:(ncol(pav)]
+
+#  3. LABEL AMR AND VIRULENCE GENES
+# Gene type is inferred from cell content:
+#   - "amrfinder" in >=50% of present cells → AMR gene
+#   - "abricate"  in >=50% of present cells → Virulence gene
+# A GENE_TYPE column is created first, then suffixes applied to 'Gene' column
+
+i <- 0 #prints progress
+pav$GENE_TYPE <- apply(genome_cols, 1, function(x) {
+    i <<- i + 1
+    if (i %% 5000 == 0) cat("Processing row", i, "\n")
+    
+    present <- x[x != ""]
+    if (length(present) == 0) return("")
+    
+    amr_prop <- sum(grepl("amrfinder", present, ignore.case = TRUE)) / length(present)
+    abr_prop <- sum(grepl("abricate",  present, ignore.case = TRUE)) / length(present)
+    
+    if (amr_prop > 0.5) return("AMR")
+    if (abr_prop > 0.5) return("Virulence")
+    return("")
+})
+
+cat("\nGene type counts:\n")
+print(table(pav$GENE_TYPE))
+# Expected: AMR = 241, Virulence = 1166
+
+# Add suffix to Gene column based on GENE_TYPE
+pav$Gene <- ifelse(pav$GENE_TYPE == "AMR",
+                   paste0(pav$Gene, "_amr"),
+                   ifelse(pav$GENE_TYPE == "Virulence",
+                          paste0(pav$Gene, "_vir"),
+                          pav$Gene))
+
+# Fix double suffixes that arise if gene was already labelled
+pav$Gene <- gsub("_amr_amr", "_amr", pav$Gene)
+pav$Gene <- gsub("_vir_vir", "_vir", pav$Gene)
+
+cat("\nAMR gene examples:\n")
+print(head(pav$Gene[grepl("_amr", pav$Gene)]))
+cat("Virulence gene examples:\n")
+print(head(pav$Gene[grepl("_vir", pav$Gene)]))
+
+# 4. LABEL BIOFILM GENES 
+# Create eggnog column
+pav$eggnog <- ""
+
+# Define genome columns
+genome_cols <- pav[, 15:(ncol(pav)-1)]
+
+# Label biofilm genes (original method)
+for (gene in unique(biofilm$gene)) {
+    protein_ids <- biofilm$protein_id[biofilm$gene == gene]
+    
+    matching_rows <- apply(genome_cols, 1, function(x) {
+        present <- x[x != ""]
+        any(sapply(protein_ids, function(id) any(grepl(id, present, fixed = TRUE))))
+    })
+    
+    pav$eggnog[matching_rows] <- paste0(gene, " (biofilm)")
+    pav$Gene[matching_rows] <- ifelse(grepl("_BF", pav$Gene[matching_rows]),
+                                      pav$Gene[matching_rows],
+                                      paste0(pav$Gene[matching_rows], "_BF"))
+    
+    cat("Gene:", gene, "- Rows labelled:", sum(matching_rows), "\n")
+}
+
