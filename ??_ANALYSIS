@@ -132,15 +132,4 @@ isolate_df <- data.frame(
 ast_blind_spot <- isolate_df %>%
     filter(Acquired_AMR == 0 & All_Biofilm_Complete == TRUE)
 
-cat("\n══ KEY FINDINGS ══════════════════════════════════════\n")
-cat("Total isolates:                    ", n_isolates, "\n")
-cat("Isolates with no acquired AMR:     ",
-    sum(isolate_df$Acquired_AMR == 0),
-    sprintf("(%.1f%%)\n", sum(isolate_df$Acquired_AMR == 0) / n_isolates * 100))
-cat("Isolates with all 39 biofilm genes:",
-    sum(isolate_df$All_Biofilm_Complete),
-    sprintf("(%.1f%%)\n", sum(isolate_df$All_Biofilm_Complete) / n_isolates * 100))
-cat("AST Blind Spot (both):             ",
-    nrow(ast_blind_spot),
-    sprintf("(%.1f%%)\n", nrow(ast_blind_spot) / n_isolates * 100))
-cat("══════════════════════════════════════════════════════\n")
+
