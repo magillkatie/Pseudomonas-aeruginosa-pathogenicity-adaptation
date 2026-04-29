@@ -1,0 +1,158 @@
+# PANGENOME HEAP’S LAW ANALYSIS
+
+# Purpose:
+   Assess whether the pangenome is open or closed using Heap’s Law.
+   This involves converting the presence/absence matrix into binary form, generating pangenome accumulation curves, fitting Heap’s Law, and estimating the openness parameter γ.
+
+# Inputs:
+   - Pangenome presence/absence CSV file from PyamilySeq
+   - Columns: metadata first, genome presence/absence columns last
+
+# Outputs:
+   - Heap’s Law γ estimate
+   - Pangenome accumulation curve (base R + ggplot2)
+   - Permutation‑averaged γ estimate (100 permutations)
+   - heaps_law.png (saved plot)
+   - core gene count (≥99% of genomes)
+
+# Notes:
+   - γ > 0 indicates an open pangenome
+   - PyamilySeq presence/absence matrices often contain blank cells → must be converted to 0/1.
+   - Permutation analysis stabilises the γ estimate.
+   - core genes are present in ≥99% of isolates
+
+## SCRIPT
+# Load presence/absence matrix
+pav <- read.csv(pav_file, check.names = FALSE)              # Read CSV without altering column names
+
+# Inspect column structure
+head(names(pav), 20)                                        # View first 20 column names
+tail(names(pav), 5)                                         # View last 5 column names
+
+# Extract genome columns (metadata removed)
+genome_cols <- pav[, 15:(ncol(pav) - 2)]                    # Select genome presence/absence columns
+
+# Convert blank cells to 0 and non-zero to 1
+genome_cols[genome_cols == ""] <- 0                         # Replace blanks with 0
+genome_cols[genome_cols != "0"] <- 1                        # Everything else becomes 1
+genome_cols <- apply(genome_cols, 2, as.numeric)            # Convert to numeric matrix
+
+# Count genomes
+n_genomes <- ncol(genome_cols)                              # Number of genomes
+cat("Number of genomes detected:", n_genomes, "\n")         # Print count
+
+# Random genome order for accumulation curve
+set.seed(123)                                               # Reproducibility
+order_genomes <- sample(n_genomes)                          # Random permutation
+
+# Prepare vectors
+pangenome_size <- numeric(n_genomes)                        # Store pangenome size at each step
+current_genes <- rep(0, nrow(genome_cols))                  # Track which genes have appeared
+
+# Build pangenome accumulation curve
+for (i in seq_along(order_genomes)) {
+  g <- order_genomes[i]                                     # Select genome index
+  current_genes <- current_genes | genome_cols[, g]         # Add new genes
+  pangenome_size[i] <- sum(current_genes)                   # Count total unique genes
+}
+
+# X-axis
+n <- 1:n_genomes                                            # Genome count sequence
+
+# Fit Heap’s Law: P(n) = k * n^γ
+heap_fit <- nls(
+  pangenome_size ~ k * n^gamma,                             # Model formula
+  start = list(k = pangenome_size[1], gamma = 0.5)          # Starting values
+)
+
+summary(heap_fit)                                           # Show model fit summary
+
+# Extract parameters
+k_est     <- coef(heap_fit)["k"]                            # k estimate
+gamma_est <- coef(heap_fit)["gamma"]                        # γ estimate
+
+# Base R plot
+plot(n, pangenome_size,
+     pch = 16, col = "steelblue",
+     xlab = "Number of Genomes",
+     ylab = "Pangenome Size",
+     main = "Pangenome Growth Curve (Heap's Law)")
+
+lines(n, predict(heap_fit), col = "firebrick", lwd = 3)     # Add fitted curve
+
+text(max(n)*0.6, max(pangenome_size)*0.85,                  # Add γ to plot
+     labels = paste0("Openness (γ) = ", round(gamma_est, 3)),
+     col = "black", cex = 1.2, font = 2)
+
+# ggplot version
+library(ggplot2)
+
+df <- data.frame(
+  n = n,
+  pangenome = pangenome_size,
+  fitted = predict(heap_fit)
+)
+
+gg <- ggplot(df, aes(x = n)) +
+  geom_line(aes(y = pangenome), color = "steelblue", linewidth = 0.9) +
+  geom_line(aes(y = fitted), color = "firebrick", linewidth = 1.4) +
+  labs(
+    title = "Pangenome Growth Curve (Heap's Law)",
+    subtitle = "Pseudomonas aeruginosa",
+    x = "Number of Genomes",
+    y = "Pangenome Size"
+  ) +
+  annotate("text", x = Inf, y = Inf,
+           label = paste0("γ = ", round(gamma_est, 3)),
+           hjust = 1.1, vjust = 2, size = 5, fontface = "bold") +
+  theme_minimal(base_size = 14)
+
+ggsave("heaps_law.png", plot = gg, bg = "transparent")       # Save plot
+
+# ---------------------------------------------------------
+# PERMUTATION ANALYSIS (100 permutations)
+# ---------------------------------------------------------
+
+set.seed(42)                                                # Reproducibility
+n_permutations <- 100                                       # Number of permutations
+
+pan_matrix  <- matrix(0, nrow = n_permutations, ncol = n_genomes)
+core_matrix <- matrix(0, nrow = n_permutations, ncol = n_genomes)
+
+for (p in 1:n_permutations) {
+  order <- sample(1:n_genomes)                              # Random genome order
+  seen  <- rep(0, nrow(genome_cols))                        # Track pangenome
+  
+  for (g in 1:n_genomes) {
+    seen <- pmax(seen, genome_cols[, order[g]])             # Add new genes
+    pan_matrix[p, g] <- sum(seen)                           # Pangenome size
+    
+    if (g == 1) {
+      core_vec <- genome_cols[, order[g]]                   # Start core set
+    } else {
+      core_vec <- core_vec * genome_cols[, order[g]]        # Intersection
+    }
+    core_matrix[p, g] <- sum(core_vec)                      # Core size
+  }
+}
+
+# Mean curves
+pan_means  <- colMeans(pan_matrix)
+core_means <- colMeans(core_matrix)
+
+# Fit Heap’s Law to averaged curve
+genomes_seq <- 1:n_genomes
+
+heap_fit_avg <- nls(
+  pan_means ~ K * genomes_seq^gamma,
+  start = list(K = pan_means[1], gamma = 0.5),
+  control = nls.control(maxiter = 1000)
+)
+
+K     <- coef(heap_fit_avg)["K"]
+gamma <- coef(heap_fit_avg)["gamma"]
+
+#core gene count (≥99% of genomes)
+core_threshold <- 0.99 * n_genomes                   # 99% threshold
+core_genes <- sum(rowSums(genome_cols) >= core_threshold)
+core_genes                                      # Print core count
