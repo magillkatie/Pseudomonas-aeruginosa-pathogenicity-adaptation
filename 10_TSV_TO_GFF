@@ -101,21 +101,11 @@ done
 #   Count GFF files produced by each conversion:
 #       ls -1 result_gff/*.gff | wc -l
 #       (total should equal sum of Abricate + AMRFinderPlus input files)
-#
-#   Check for empty GFF output files:
-#       find result_gff/ -name "*.gff" -empty
-#
-#   Spot-check a converted GFF for correct formatting:
-#       head -20 result_gff/<genome_id>.gff
-#       (should begin with ##gff-version 3 header and contain tab-separated fields)
-#
+
 #   Verify contig IDs in GFF match those in the corresponding .fna file:
 #       grep -v "^#" result_gff/<genome_id>.gff | cut -f1 | sort -u
 #       grep "^>" <genome_id>.fna | sed 's/>//' | cut -d' ' -f1 | sort -u
 #       (outputs should match)
 #
-#   Inspect error logs for any failed conversions:
-#       grep -i "error" ORF-*.err
+# END OF STAGE 9
 
-# END OF STAGE 5
-````
