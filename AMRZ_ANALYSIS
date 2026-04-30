@@ -1,0 +1,365 @@
+# amrZ ANALYSIS — ACQUIRED AMR GENE ASSOCIATIONS
+ 
+# Purpose:
+#    Investigate whether isolates carrying an accessory (duplicate) copy of amrZ are associated with higher acquired AMR genes.
+#    Includes:
+#      - Group assignment (Core copy / Accessory amrZ / No amrZ detected)
+#      - Wilcoxon and chi-squared tests for acquired AMR burden
+#      - Per-gene Fisher's exact tests with FDR correction
+#      - Visualisations: boxplot, proportion bar chart, top-20 gene prevalence panel
+ 
+# Inputs:
+#    - Roary presence/absence matrix (gene_presence_absence_annotated.csv)
+#    - Columns 15 → (GENE_TYPE - 1) represent isolates
+#    - AMR genes annotated with suffix "_amr"
+#    - Biofilm/amrZ genes annotated in eggNOG as "amrZ(biofilm)"
+#    - core_5_names vector (defined in AST blind-spot script)
+ 
+# Outputs:
+#    - scores_df: per-isolate table with amrZ group and acquired AMR count
+#    - summary_by_amrZ: group-level summary statistics
+#    - significant_genes: acquired AMR genes significantly associated with amrZ group
+#    - Plots:
+#        A. Boxplot of acquired AMR gene count by amrZ variant
+#        B. Proportion of isolates with ≥1 acquired AMR gene
+#        C. Top 20 acquired AMR genes differing between groups (with FDR stars)
+#        D. Combined panel (patchwork)
+ 
+# Notes:
+#    - amrZ families are identified via eggNOG annotation: "amrZ(biofilm)"
+#    - The most prevalent amrZ pangenome family = canonical (core copy)
+#    - The second most prevalent = accessory (duplicate) copy
+#    - Acquired AMR genes exclude core_5_names
+#    - FDR correction applied using Benjamini-Hochberg method
+#    - Gene group IDs are mapped to names via gene_name_map
+ 
+---
+ 
+## SCRIPT
+ 
+### 0. Load data
+pav <- read.csv("~/Downloads/gene_presence_absence_annotated.csv",
+                check.names = FALSE, stringsAsFactors = FALSE)
+ 
+### 1. Extract isolate columns and build binary presence/absence matrix
+isolate_cols     <- 15:(which(names(pav) == "GENE_TYPE") - 1)
+genome_cols      <- pav[, isolate_cols]
+genome_cols_only <- (genome_cols != "" & !is.na(genome_cols)) * 1
+ 
+### 2. Identify AMR and biofilm gene rows
+strict_amr_rows    <- grepl("_amr$", pav$Gene)
+biofilm_rows       <- grepl("\\(biofilm\\)", pav$eggnog)
+biofilm_gene_clean <- gsub(" \\(biofilm\\)", "", pav$eggnog)
+ 
+### 3. Identify amrZ pangenome families and rank by prevalence
+amrZ_rows <- biofilm_rows & biofilm_gene_clean == "amrZ"
+ 
+amrZ_family_counts <- data.frame(
+  Family = pav$Gene[amrZ_rows],
+  Count  = rowSums(genome_cols_only[amrZ_rows, ] == 1)
+)
+ 
+ordered          <- amrZ_family_counts[order(amrZ_family_counts$Count, decreasing = TRUE), ]
+canonical_family <- ordered$Family[1]   # most prevalent = core copy
+duplicate_family <- ordered$Family[2]   # second = accessory copy
+ 
+### 4. Identify which isolates carry each amrZ variant
+canonical_row <- which(pav$Gene == canonical_family)
+duplicate_row <- which(pav$Gene == duplicate_family)
+ 
+has_canonical <- colnames(genome_cols_only)[genome_cols_only[canonical_row, ] == 1]
+has_duplicate <- colnames(genome_cols_only)[genome_cols_only[duplicate_row, ] == 1]
+ 
+### 5. Assign amrZ group to each isolate
+scores_df <- data.frame(Isolate = colnames(genome_cols_only))
+ 
+scores_df$amrZ_group <- ifelse(
+  scores_df$Isolate %in% has_duplicate, "Accessory amrZ",
+  ifelse(scores_df$Isolate %in% has_canonical, "Core copy",
+         "No amrZ detected")
+)
+ 
+### 6. Count acquired AMR genes per isolate (excluding Core-5)
+acquired_amr_rows  <- strict_amr_rows & !(pav$Gene %in% core_5_names)
+acquired_counts    <- colSums(genome_cols_only[acquired_amr_rows, ] == 1)
+scores_df$Acquired_AMR <- acquired_counts[scores_df$Isolate]
+ 
+### 7. Summarise acquired AMR burden by amrZ group
+library(dplyr)
+ 
+summary_by_amrZ <- scores_df %>%
+  group_by(amrZ_group) %>%
+  summarise(
+    N                   = n(),
+    Mean_Acquired_AMR   = mean(Acquired_AMR),
+    Median_Acquired_AMR = median(Acquired_AMR),
+    Pct_with_acquired   = mean(Acquired_AMR > 0) * 100
+  )
+ 
+summary_by_amrZ
+ 
+### 8. Statistical tests (Core copy vs Accessory amrZ only)
+plot_df_amrZ <- scores_df %>%
+  filter(amrZ_group %in% c("Core copy", "Accessory amrZ"))
+ 
+# Wilcoxon rank-sum: AMR burden
+wilcox.test(Acquired_AMR ~ amrZ_group, data = plot_df_amrZ)
+ 
+# Chi-squared: presence/absence of any acquired AMR gene
+contingency <- table(
+  plot_df_amrZ$amrZ_group,
+  plot_df_amrZ$Acquired_AMR > 0
+)
+chisq.test(contingency)
+ 
+### 9. Build per-isolate presence/absence matrix for acquired AMR genes
+acquired_gene_names <- pav$Gene[acquired_amr_rows]
+ 
+acquired_pa <- as.data.frame(t(genome_cols_only[acquired_amr_rows, ] == 1))
+colnames(acquired_pa) <- acquired_gene_names
+acquired_pa$Isolate   <- rownames(acquired_pa)
+ 
+acquired_pa <- acquired_pa %>%
+  left_join(scores_df[, c("Isolate", "amrZ_group")], by = "Isolate") %>%
+  filter(amrZ_group != "No amrZ detected")
+ 
+### 10. Per-gene Fisher's exact tests with FDR correction
+gene_pvals <- sapply(acquired_gene_names, function(g) {
+  tab <- table(acquired_pa[[g]], acquired_pa$amrZ_group)
+  if (nrow(tab) < 2 || ncol(tab) < 2) return(NA)
+  fisher.test(tab)$p.value
+})
+ 
+gene_fdr <- p.adjust(gene_pvals, method = "BH")
+ 
+gene_stats <- data.frame(
+  Gene    = acquired_gene_names,
+  p_value = gene_pvals,
+  FDR     = gene_fdr
+) %>% arrange(FDR)
+ 
+significant_genes <- gene_stats[!is.na(gene_stats$FDR) & gene_stats$FDR < 0.05, ]
+significant_genes
+ 
+### 11. Identify top 20 genes with greatest prevalence difference between groups
+library(tidyr)
+ 
+gene_prev <- acquired_pa %>%
+  group_by(amrZ_group) %>%
+  summarise(across(all_of(acquired_gene_names), mean), .groups = "drop") %>%
+  pivot_longer(-amrZ_group, names_to = "Gene", values_to = "Prevalence") %>%
+  mutate(Prevalence = Prevalence * 100)
+ 
+gene_diff <- gene_prev %>%
+  pivot_wider(names_from = amrZ_group, values_from = Prevalence) %>%
+  mutate(Diff = abs(`Accessory amrZ` - `Core copy`)) %>%
+  arrange(desc(Diff)) %>%
+  slice_head(n = 20)
+ 
+top_genes     <- gene_diff$Gene
+gene_prev_top <- gene_prev %>% filter(Gene %in% top_genes)
+ 
+### 12. Map pangenome group IDs to readable gene names
+gene_name_map <- c(
+  "group_534_amr"   = "FosA",        "group_3402_amr"  = "blaPDC-16",
+  "group_3562_amr"  = "aph(3')-IIb", "group_4205_amr"  = "blaOXA-848",
+  "group_4713_amr"  = "catB7",       "group_5552_amr"  = "sul1",
+  "group_5611_amr"  = "qacEdelta1",  "group_6196_amr"  = "aac(6')-Ib",
+  "group_6860_amr"  = "blaOXA-10",   "group_7193_amr"  = "aph(6)-Id",
+  "group_7058_amr"  = "aadA1",       "group_7182_amr"  = "aph(3'')-Ib",
+  "group_7379_amr"  = "tet(G)",      "group_7534_amr"  = "ant(2'')-Ia",
+  "group_7548_amr"  = "aadA6",       "group_7584_amr"  = "floR",
+  "group_7030_amr"  = "aac(6')-Il",  "group_7771_amr"  = "blaKPC-2",
+  "group_8215_amr"  = "qnrVC1",      "group_7792_amr"  = "blaVIM-2",
+  "group_7844_amr"  = "blaGES-6",    "group_8204_amr"  = "cmlA6",
+  "group_8841_amr"  = "toprJ",       "group_8862_amr"  = "tmexD3",
+  "group_8982_amr"  = "blaOXA-796",  "group_9186_amr"  = "aph(3')-VIa",
+  "group_9083_amr"  = "sul1",        "group_9016_amr"  = "tmexC",
+  "group_9172_amr"  = "aadA2",       "group_9063_amr"  = "blaNDM-1",
+  "group_9211_amr"  = "blaOXA-2",    "group_9904_amr"  = "msr(E)",
+  "group_9990_amr"  = "blaCARB-2",   "group_10140_amr" = "mph(E)",
+  "group_9804_amr"  = "catB3",       "group_9846_amr"  = "aac(6')-IIa",
+  "group_10197_amr" = "qacF",        "group_10076_amr" = "arr-2",
+  "group_11046_amr" = "aph(3'')",    "group_11072_amr" = "cml",
+  "group_10012_amr" = "cmx",         "group_10934_amr" = "ble",
+  "group_10733_amr" = "aph(3')-Ia",  "group_10686_amr" = "blaVEB-9",
+  "group_10848_amr" = "blaPER-4",    "group_11094_amr" = "tet(A)",
+  "group_11645_amr" = "rmtB4",       "group_11638_amr" = "aph(3')-XV",
+  "group_11798_amr" = "aac(3)-IId",  "group_10088_amr" = "dfrB5",
+  "group_11977_amr" = "blaTEM-1",    "group_11268_amr" = "blaIMP-1",
+  "group_12176_amr" = "armA",        "group_11777_amr" = "tet(C)",
+  "group_9765_amr"  = "aac(6')-29a", "group_12582_amr" = "blaIMP-45",
+  "group_9980_amr"  = "dfrB",        "group_11815_amr" = "aac(3)-Id",
+  "group_13480_amr" = "blaAFM-1",    "group_13885_amr" = "ant(2'')-Ia",
+  "group_13991_amr" = "dfrA47",      "group_12834_amr" = "dfrA1",
+  "group_13831_amr" = "rmtF2",       "group_13992_amr" = "catB",
+  "group_14247_amr" = "blaIMP-84",   "group_13692_amr" = "AAC(3)-Id",
+  "group_15035_amr" = "aph(3')-IIa", "group_15690_amr" = "aac(6')-33",
+  "group_15753_amr" = "aadA5",       "group_15193_amr" = "aph(6)-Ic",
+  "group_15955_amr" = "aadA13",      "group_16280_amr" = "ant(4')-IIb",
+  "group_13955_amr" = "aadA6",       "group_15720_amr" = "aacA8",
+  "group_16985_amr" = "dfrA5",       "group_14024_amr" = "ble",
+  "group_17132_amr" = "qacE",        "group_17462_amr" = "sul2",
+  "group_17573_amr" = "aac(6')-IIc", "group_17579_amr" = "blaCAE-1",
+  "group_15063_amr" = "blaPME-1",    "group_17748_amr" = "aadA7",
+  "group_17918_amr" = "sul1",        "group_18110_amr" = "ere(A)",
+  "group_18144_amr" = "blaOXA",      "group_15966_amr" = "qacG2",
+  "group_18007_amr" = "blaIMP-15",   "group_18959_amr" = "aph(3'')-Ib",
+  "group_19149_amr" = "aac(3)-II",   "group_19465_amr" = "blaKBL-1",
+  "group_14377_amr" = "cml",         "group_18170_amr" = "ble",
+  "group_18768_amr" = "blaTEM",      "group_19226_amr" = "blaIMP-18",
+  "group_20592_amr" = "aac(3)-Ic",   "group_18599_amr" = "blaSPM-1",
+  "group_20833_amr" = "aac(3)-AAC(3)-I", "group_21021_amr" = "ble",
+  "group_21420_amr" = "bla",         "group_21830_amr" = "ant(2'')-Ia",
+  "group_21908_amr" = "blaKBL",      "group_21961_amr" = "floR",
+  "group_22092_amr" = "catB8",       "group_22174_amr" = "blaOXA",
+  "group_20188_amr" = "catB",        "group_20809_amr" = "blaOXA-46",
+  "group_20913_amr" = "aph(3'')-Ib", "group_22620_amr" = "mph(A)",
+  "group_22632_amr" = "aph(3')-IIb", "group_22762_amr" = "blaVIM-85",
+  "group_22947_amr" = "aadA10",      "group_22975_amr" = "aac(3)-IIIb",
+  "group_23268_amr" = "dfrA27",      "group_23470_amr" = "rmtD1",
+  "group_23812_amr" = "catB7",       "group_24282_amr" = "qacEdelta1",
+  "group_19065_amr" = "blaIMP-74",   "group_22596_amr" = "dfrB1",
+  "group_23055_amr" = "blaFIM-1",    "group_25202_amr" = "blaOXA-1284",
+  "group_25263_amr" = "blaDIM-1",    "group_25783_amr" = "catA",
+  "group_25955_amr" = "blaOXA-9",    "group_26192_amr" = "aph(6)-Id",
+  "group_26319_amr" = "aph(3')-II",  "group_26392_amr" = "cml",
+  "group_26533_amr" = "cmlB",        "group_26691_amr" = "aph(3')-IIb",
+  "group_27469_amr" = "blaPDC-41",   "group_27506_amr" = "aac(6')-33",
+  "group_27622_amr" = "aph(3'')",    "group_27769_amr" = "blaCTX-M-15",
+  "group_27537_amr" = "cmlB1",       "group_28784_amr" = "blaPDC",
+  "group_29989_amr" = "cmlA",        "group_30469_amr" = "sul1",
+  "group_30564_amr" = "dfrA12",      "group_31068_amr" = "aph(3')-Ib",
+  "group_31255_amr" = "qacE",        "group_31312_amr" = "aph(3')-XV",
+  "group_31983_amr" = "smr",         "group_32217_amr" = "arr",
+  "group_32343_amr" = "ant(2'')-Ia", "group_32861_amr" = "sul1",
+  "group_28837_amr" = "blaSIM-1",    "group_32992_amr" = "aac(6')-Ib4",
+  "group_33097_amr" = "aac(6')-F72", "group_33486_amr" = "aac(6')-Ib4",
+  "group_33536_amr" = "catB3",       "group_33698_amr" = "catA1",
+  "group_33716_amr" = "aadA1",       "group_34364_amr" = "aadA25",
+  "group_34505_amr" = "dfrA10",      "group_34568_amr" = "bla",
+  "group_34879_amr" = "fosE",        "group_35405_amr" = "sul1",
+  "group_35818_amr" = "dfrA42",      "group_36111_amr" = "blaOXA-2",
+  "group_36118_amr" = "blaOXA",      "group_37037_amr" = "blaPAC-1",
+  "group_37410_amr" = "mph(F)",      "group_37608_amr" = "blaPSE",
+  "group_37780_amr" = "floR2",       "group_40794_amr" = "aac(3)-C1264",
+  "group_41774_amr" = "catB7",       "group_27582_amr" = "blaKPC",
+  "group_42619_amr" = "qnrS2",       "group_46349_amr" = "ble",
+  "group_46549_amr" = "catB3",       "group_47791_amr" = "aac(3)-Id",
+  "group_48593_amr" = "smr",         "group_48939_amr" = "aac(6')-Il",
+  "group_49190_amr" = "qacEdelta1",  "group_49299_amr" = "arr-7",
+  "group_49511_amr" = "ant(2'')-Ia", "group_50772_amr" = "aacA48",
+  "group_53014_amr" = "toprJ",       "group_53869_amr" = "blaCMY-2",
+  "group_54178_amr" = "cml",         "group_54205_amr" = "msr(E)",
+  "group_54641_amr" = "aac(6')-Ib",  "group_55678_amr" = "blaSCO-1",
+  "group_55826_amr" = "msr(E)",      "group_55923_amr" = "aac(3)-IIIc",
+  "group_55942_amr" = "tet(G)",      "group_56029_amr" = "aph(3'')-Ib",
+  "group_56121_amr" = "floR2",       "group_56327_amr" = "aph(3')",
+  "group_56798_amr" = "blaPDC",      "group_57168_amr" = "aac(3)-VIa",
+  "group_57216_amr" = "erm",         "group_57389_amr" = "sul1",
+  "group_57579_amr" = "tmexC",       "group_57645_amr" = "erm(42)",
+  "group_58203_amr" = "tmexD",       "group_58577_amr" = "mcr-5.1",
+  "group_60891_amr" = "blaOXA",      "group_62447_amr" = "tet(K)",
+  "group_62918_amr" = "aph(6)-Id",   "group_63769_amr" = "dfrA25",
+  "group_63786_amr" = "dfrA16",      "group_64047_amr" = "rmtF2",
+  "group_64293_amr" = "blaPER-3",    "group_64769_amr" = "blaKPC",
+  "group_65241_amr" = "sul1",        "group_65290_amr" = "aac(6')",
+  "group_65291_amr" = "aac(6')-Iae", "group_65415_amr" = "aadA1",
+  "group_65552_amr" = "blaVIM",      "group_65879_amr" = "aph(3')-VI",
+  "group_65993_amr" = "ant(2'')-Ia", "group_66716_amr" = "aac(6')-29b",
+  "group_66734_amr" = "blaVIM",      "group_66743_amr" = "aph(3')-VI",
+  "group_67046_amr" = "blaVIM-2",    "group_67232_amr" = "dfrA27",
+  "group_67308_amr" = "aac(3)-If",   "group_67322_amr" = "blaNDM-1",
+  "group_67708_amr" = "sul1",        "group_67894_amr" = "blaOXA",
+  "group_68100_amr" = "sul1",        "group_68276_amr" = "floR",
+  "group_68446_amr" = "aph(3'')-Ib", "group_69249_amr" = "aadA6",
+  "group_69426_amr" = "blaLCR-1",    "group_69441_amr" = "aac(2')-IIa",
+  "group_69559_amr" = "ant(4')-IIb", "group_69615_amr" = "sul1",
+  "group_69701_amr" = "tet(G)",      "group_70007_amr" = "aph(3')",
+  "group_70098_amr" = "cmx",         "group_70316_amr" = "tet(A)",
+  "group_70645_amr" = "blaGES",      "group_71122_amr" = "catB2",
+  "group_71884_amr" = "catB2",       "group_71960_amr" = "aph(3')-VIa",
+  "group_72180_amr" = "ant(2'')-Ia", "group_72579_amr" = "blaGES",
+  "group_72781_amr" = "qnrS2",       "group_73085_amr" = "qnrS2",
+  "group_73088_amr" = "qnrVC4"
+)
+ 
+### 13. Apply human-readable gene labels and set factor order
+gene_prev_top$Gene_label <- ifelse(
+  as.character(gene_prev_top$Gene) %in% names(gene_name_map),
+  gene_name_map[as.character(gene_prev_top$Gene)],
+  as.character(gene_prev_top$Gene)
+)
+ 
+gene_order_labels <- ifelse(
+  gene_diff$Gene %in% names(gene_name_map),
+  gene_name_map[gene_diff$Gene],
+  gene_diff$Gene
+)
+ 
+# Merge FDR values and assign significance stars
+gene_prev_top <- gene_prev_top %>%
+  left_join(gene_stats[, c("Gene", "FDR")], by = "Gene")
+ 
+gene_prev_top$Signif <- cut(
+  gene_prev_top$FDR,
+  breaks = c(-Inf, 0.001, 0.01, 0.05, Inf),
+  labels = c("***", "**", "*", "")
+)
+ 
+# Apply ordered factor levels (largest difference at top)
+gene_prev_top$Gene_label <- factor(gene_prev_top$Gene_label,
+                                   levels = rev(gene_order_labels))
+ 
+### 14. Plot A — Boxplot: acquired AMR gene count by amrZ variant
+library(ggplot2)
+ 
+p1 <- ggplot(plot_df_amrZ, aes(x = amrZ_group, y = Acquired_AMR, fill = amrZ_group)) +
+  geom_boxplot(outlier.shape = NA, alpha = 0.7) +
+  geom_jitter(aes(color = amrZ_group), width = 0.2, alpha = 0.4, size = 1) +
+  scale_fill_manual(values  = c("Core copy" = "#2196F3", "Accessory amrZ" = "#F44336")) +
+  scale_color_manual(values = c("Core copy" = "#2196F3", "Accessory amrZ" = "#F44336")) +
+  theme_classic(base_size = 13) +
+  theme(legend.position = "none") +
+  labs(title = "Acquired AMR Gene Count by amrZ Variant", x = NULL, y = "Acquired AMR Genes")
+ 
+### 15. Plot B — Bar chart: proportion of isolates with ≥1 acquired AMR gene
+prop_df <- plot_df_amrZ %>%
+  group_by(amrZ_group) %>%
+  summarise(Proportion = mean(Acquired_AMR > 0) * 100)
+ 
+p2 <- ggplot(prop_df, aes(x = amrZ_group, y = Proportion, fill = amrZ_group)) +
+  geom_col(color = "black") +
+  geom_text(aes(label = paste0(round(Proportion, 1), "%")), vjust = -0.5, size = 4) +
+  scale_fill_manual(values = c("Core copy" = "#2196F3", "Accessory amrZ" = "#F44336")) +
+  scale_y_continuous(limits = c(0, 55), expand = c(0, 0)) +
+  theme_classic(base_size = 13) +
+  theme(legend.position = "none") +
+  labs(title = "Proportion of Isolates with Acquired AMR Genes", x = NULL, y = "% with Acquired AMR")
+ 
+### 16. Plot C — Horizontal bar chart: top 20 genes with FDR stars
+p3 <- ggplot(gene_prev_top, aes(x = Prevalence, y = Gene_label, fill = amrZ_group)) +
+  geom_col(position = position_dodge(width = 0.7), width = 0.7, color = "black") +
+  geom_text(
+    aes(label = Signif),
+    position = position_dodge(width = 0.7),
+    hjust    = -0.3,
+    size     = 5,
+    fontface = "bold"
+  ) +
+  scale_fill_manual(values = c("Core copy" = "#2196F3", "Accessory amrZ" = "#F44336")) +
+  scale_x_continuous(limits = c(0, max(gene_prev_top$Prevalence) + 5), expand = c(0, 0)) +
+  theme_classic(base_size = 13) +
+  labs(
+    title    = "Top 20 Acquired AMR Genes Differing Between amrZ Groups",
+    subtitle = "Bars show prevalence; stars indicate FDR significance",
+    x        = "% isolates with gene present",
+    y        = "Acquired AMR Gene",
+    fill     = "amrZ Variant"
+  )
+ 
+### 17. Combined panel (patchwork)
+library(patchwork)
+ 
+(p1 | p2) / p3 +
+  plot_annotation(tag_levels = "A")
