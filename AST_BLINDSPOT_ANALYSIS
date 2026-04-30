@@ -1,0 +1,175 @@
+# AST BLIND‑SPOT ANALYSIS
+
+# Purpose:
+   Identify isolates that represent potential AST (Antimicrobial Susceptibility Testing) blind‑spots. 
+   These isolates:
+     - Possess only the “Core‑5” AMR genes (no acquired AMR genes)
+     - Contain all unique biofilm‑associated genes
+     - Have ≤5 AMR genes in total
+   Such isolates may appear phenotypically susceptible while retaining strong biofilm‑associated tolerance.
+
+# Inputs:
+   - Roary presence/absence matrix (gene_presence_absence_annotated.csv)
+   - Columns 15 → (GENE_TYPE - 1) represent isolates
+   - AMR genes annotated with suffix "_amr"
+   - Biofilm genes annotated in eggNOG as geneName(biofilm)
+
+# Outputs:
+   - List of true AST blind‑spot isolates
+   - Core‑5 AMR gene set
+   - AMR gene frequency tables
+   - Plots:
+       • Blind‑spot vs non‑blind‑spot isolates
+       • Distribution of AMR gene counts
+       • Core‑5 vs top acquired AMR gene frequencies
+
+# Notes:
+   - Biofilm genes are matched using eggNOG annotations.
+   - Presence/absence matrix is converted to binary (1 = present, 0 = absent).
+
+
+## SCRIPT
+
+### 0. Load Roary PAV file
+pav_file <- "~/Downloads/gene_presence_absence_annotated.csv"
+pav <- read.csv(pav_file, check.names = FALSE, stringsAsFactors = FALSE)
+
+### 1. Extract isolate columns (15 → column before GENE_TYPE)
+isolate_cols <- 15:(which(names(pav) == "GENE_TYPE") - 1)
+genome_cols <- pav[, isolate_cols]
+
+# Convert to binary presence/absence
+genome_cols_only <- (genome_cols != "" & !is.na(genome_cols)) * 1
+
+### 2. Identify AMR and Biofilm rows
+strict_amr_rows <- grepl("_amr$", pav$Gene)                           # AMR genes end with "_amr"
+biofilm_rows <- grepl("\\(biofilm\\)", pav$eggnog, ignore.case = TRUE) # eggNOG biofilm annotation
+
+### 3. Extract unique biofilm gene names
+biofilm_gene_names <- sub("\\(biofilm\\).*", "", pav$eggnog[biofilm_rows])
+biofilm_gene_names <- unique(biofilm_gene_names[biofilm_gene_names != ""])
+
+### 4. Map each unique biofilm gene to all rows where it appears
+biofilm_gene_to_rows <- lapply(biofilm_gene_names, function(g) {
+  which(grepl(paste0("^", g, "\\(biofilm\\)"), pav$eggnog, ignore.case = TRUE))
+})
+names(biofilm_gene_to_rows) <- biofilm_gene_names
+
+### 5. Count AMR genes per isolate
+real_amr_counts <- colSums(genome_cols_only[strict_amr_rows, ] == 1)
+
+### 6. Identify isolates with ≤5 AMR genes
+blind_spot_isolates <- names(real_amr_counts[real_amr_counts <= 5])
+bs_amr_matrix <- genome_cols_only[strict_amr_rows, blind_spot_isolates, drop = FALSE]
+
+### 7. Identify the Core‑5 AMR genes
+gene_hits <- rowSums(bs_amr_matrix == 1)
+
+all_bs_amr_genes <- data.frame(
+  Gene_Name = pav$Gene[strict_amr_rows][gene_hits > 0],
+  Frequency = gene_hits[gene_hits > 0]
+)
+
+all_bs_amr_genes <- all_bs_amr_genes[order(all_bs_amr_genes$Frequency, decreasing = TRUE), ]
+
+core_5_names <- all_bs_amr_genes$Gene_Name[all_bs_amr_genes$Frequency > 800]
+
+### 8. AMR condition: isolate has ONLY the Core‑5 AMR genes
+is_core5_only <- apply(genome_cols_only[strict_amr_rows, ], 2, function(col) {
+  present_genes <- pav$Gene[strict_amr_rows][col == 1]
+  length(present_genes) > 0 &&
+    all(present_genes %in% core_5_names)
+})
+
+### 9. Biofilm condition: isolate contains ALL unique biofilm genes
+is_full_biofilm <- sapply(1:ncol(genome_cols_only), function(i) {
+  all(sapply(biofilm_gene_to_rows, function(rows) {
+    any(genome_cols_only[rows, i] == 1)
+  }))
+})
+names(is_full_biofilm) <- colnames(genome_cols_only)
+
+### 10. TRUE AST blind‑spot = BOTH conditions
+true_blindspot <- is_core5_only & is_full_biofilm
+true_blindspot_isolates <- names(true_blindspot[true_blindspot])
+
+### 11. Output summary
+cat("\n--- TRUE AST BLIND SPOT ISOLATES ---\n")
+print(true_blindspot_isolates)
+
+cat("\nTotal Blind Spot Isolates:", length(true_blindspot_isolates), "\n")
+
+sum(strict_amr_rows)
+sum(real_amr_counts <= 5)
+core_5_names
+sum(is_core5_only)
+sum(is_full_biofilm)
+sum(true_blindspot)
+
+### Plot 1: Blind‑spot vs non‑blind‑spot isolates
+library(ggplot2)
+
+df <- data.frame(
+  Category = c("Blind-Spot Isolates", "Non-Blind-Spot Isolates"),
+  Count = c(sum(true_blindspot), length(true_blindspot) - sum(true_blindspot))
+)
+
+ggplot(df, aes(x = Category, y = Count, fill = Category)) +
+  geom_col(width = 0.7, color = "black") +
+  scale_fill_manual(values = c("#1f78b4", "#b2df8a")) +
+  theme_minimal(base_size = 14) +
+  labs(
+    title = "Distribution of AST Blind-Spot Isolates",
+    y = "Number of Isolates",
+    x = ""
+  ) +
+  theme(
+    legend.position = "none",
+    plot.title = element_text(face = "bold", size = 16)
+  )
+
+### Plot 2: Distribution of AMR gene counts
+df_amr <- data.frame(AMR_Count = real_amr_counts)
+
+ggplot(df_amr, aes(x = AMR_Count)) +
+  geom_histogram(binwidth = 1, fill = "#1f78b4", color = "black") +
+  theme_minimal(base_size = 15) +
+  labs(
+    title = "Distribution of AMR Gene Counts Across Isolates",
+    x = "Number of AMR Genes",
+    y = "Number of Isolates"
+  ) +
+  geom_vline(xintercept = 5, linetype = "dashed", color = "red", size = 1.2)
+
+### Plot 3: Core‑5 vs Top Acquired AMR Genes
+amr_rows <- strict_amr_rows
+amr_freq_all <- rowSums(genome_cols_only[amr_rows, ] == 1)
+
+all_amr_df <- data.frame(
+  Gene = pav$Gene[amr_rows],
+  Frequency = amr_freq_all
+)
+
+core5_df <- all_amr_df[all_amr_df$Gene %in% core_5_names, ]
+core5_df$Type <- "Core-5"
+
+acquired_df <- all_amr_df[!all_amr_df$Gene %in% core_5_names, ]
+top_acquired_df <- acquired_df[order(acquired_df$Frequency, decreasing = TRUE), ][1:10, ]
+top_acquired_df$Type <- "Acquired"
+
+combined_df <- rbind(core5_df, top_acquired_df)
+
+ggplot(combined_df, aes(x = reorder(Gene, Frequency), y = Frequency, fill = Type)) +
+  geom_col(color = "black", width = 0.7) +
+  scale_fill_manual(values = c("Core-5" = "#1f78b4", "Acquired" = "#fb9a99")) +
+  theme_minimal(base_size = 15) +
+  labs(
+    title = "Frequency of Core-5 vs Commonly Acquired AMR Genes",
+    x = "AMR Gene",
+    y = "Number of Isolates",
+    fill = ""
+  ) +
+  theme(
+    plot.title = element_text(face = "bold", size = 18),
+    axis.text.x = element_text(angle = 45, hjust = 1, face = "bold")
+  )
