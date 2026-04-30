@@ -1,0 +1,265 @@
+# mucA VARIANT ANALYSIS — ACQUIRED AMR GENE ASSOCIATIONS
+ 
+# Purpose:
+#    Investigate whether isolates carrying a minor allele mucA variant are associated with higher acquired AMR genes 
+#    Includes:
+#      - Group assignment (Canonical mucA / Minor allele mucA / No mucA detected)
+#      - Fisher's exact test for acquired AMR presence/absence
+#      - Visualisations: boxplot, stacked bar charts (AMR proportion, blind-spot classification)
+ 
+# Inputs:
+#    - Roary presence/absence matrix (gene_presence_absence_annotated.csv)
+#    - AMR genes annotated with suffix "_amr"
+#    - Biofilm genes annotated in eggNOG as "geneName(biofilm)"
+#    - core_5_names_fixed: Core-5 intrinsic AMR genes (defined in this script)
+ 
+# Outputs:
+#    - scores_df: per-isolate table with mucA group, AMR count, acquired AMR count,
+#                 and blind-spot classification
+#    - summary_by_mucA: group-level summary statistics
+#    - Plots:
+#        1. Boxplot of acquired AMR gene count by mucA group
+#        2. Stacked bar chart — AST blind-spot classification by mucA group
+#        3. Stacked bar chart — proportion carrying acquired AMR genes by mucA group
+#    - Saved as: plot_mucA_acquired_AMR.png, plot_mucA_blindspot.png,
+#                plot_mucA_proportion.png
+ 
+# Notes:
+#    - Canonical mucA family = group_5251_vir_BF (most prevalent family)
+#    - Minor allele mucA = all other mucA pangenome families
+#    - Acquired AMR genes exclude the Core-5 set
+#    - GENE_TYPE column removed from genome matrix before analysis
+ 
+---
+ 
+## SCRIPT
+ 
+### 0. Load libraries
+library(dplyr)
+library(tidyr)
+library(ggplot2)
+ 
+### 1. Load data
+pav <- read.csv("~/Downloads/gene_presence_absence_annotated.csv",
+                check.names = FALSE)
+ 
+### 2. Define genome (isolate) columns
+# Exclude all annotation columns — adjust if column names differ
+non_genome_cols <- c("Gene", "Non-unique Gene name", "Annotation", "No. isolates",
+                     "No. sequences", "Avg sequences per isolate", "Genome Fragment",
+                     "Order within Fragment", "Accessory Fragment",
+                     "Accessory Order with Fragment", "QC", "Min group size nuc",
+                     "Max group size nuc", "Avg group size nuc", "eggNOG", "eggnog")
+ 
+genome_cols_only <- pav[, !colnames(pav) %in% non_genome_cols, drop = FALSE]
+cat("Number of genome columns (isolates):", ncol(genome_cols_only), "\n")
+cat("Number of gene rows:", nrow(genome_cols_only), "\n")
+ 
+### 3. Remove GENE_TYPE column if present
+genome_cols_only <- genome_cols_only[, colnames(genome_cols_only) != "GENE_TYPE"]
+cat("Genome columns after GENE_TYPE removal:", ncol(genome_cols_only), "\n")
+ 
+### 4. Identify AMR gene rows
+strict_amr_rows <- grepl("_amr$", pav$Gene, ignore.case = TRUE)
+cat("Total AMR rows:", sum(strict_amr_rows), "\n")
+ 
+### 5. Calculate total AMR gene count per isolate
+real_amr_counts <- colSums(
+  genome_cols_only[strict_amr_rows, ] != "" &
+    !is.na(genome_cols_only[strict_amr_rows, ])
+)
+ 
+### 6. Define Core-5 intrinsic AMR genes
+# Core-5 = genes present in >800 isolates with ≤5 total AMR genes
+blind_spot_isolates <- names(real_amr_counts[real_amr_counts <= 5])
+bs_amr_matrix       <- genome_cols_only[strict_amr_rows, blind_spot_isolates, drop = FALSE]
+gene_hits           <- rowSums(bs_amr_matrix != "" & !is.na(bs_amr_matrix))
+ 
+core_5_names_fixed <- pav$Gene[strict_amr_rows][gene_hits > 800]
+cat("Core-5 genes:\n")
+print(core_5_names_fixed)
+ 
+### 7. Identify acquired AMR rows (non-Core-5)
+acquired_amr_rows <- strict_amr_rows & !(pav$Gene %in% core_5_names_fixed)
+cat("Acquired AMR rows:", sum(acquired_amr_rows), "\n")
+ 
+### 8. Calculate acquired AMR count per isolate
+acquired_submatrix  <- genome_cols_only[acquired_amr_rows, ]
+acquired_counts_vec <- colSums(acquired_submatrix != "" & !is.na(acquired_submatrix))
+ 
+### 9. Build per-isolate scores dataframe
+scores_df <- data.frame(
+  Isolate      = names(real_amr_counts),
+  AMR_Count    = as.numeric(real_amr_counts),
+  Acquired_AMR = as.numeric(acquired_counts_vec[match(names(real_amr_counts),
+                                                      names(acquired_counts_vec))])
+)
+ 
+scores_df <- scores_df[scores_df$Isolate != "GENE_TYPE", ]
+cat("Isolates in scores_df:", nrow(scores_df), "\n")
+ 
+### 10. Classify isolates as AST blind-spot or not
+# Blind-spot = has AMR genes but ONLY from Core-5
+is_pure_blindspot <- apply(genome_cols_only[strict_amr_rows, ], 2, function(col) {
+  present_genes <- pav$Gene[strict_amr_rows][col != "" & !is.na(col)]
+  all(present_genes %in% core_5_names_fixed) && length(present_genes) > 0
+})
+ 
+scores_df$Quadrant2 <- ifelse(
+  is_pure_blindspot[scores_df$Isolate],
+  "Pure AST Blind Spot (Core AMR Only)",
+  "High AMR / Modified Baseline"
+)
+ 
+cat("Blind-spot isolates:", sum(scores_df$Quadrant2 == "Pure AST Blind Spot (Core AMR Only)"), "\n")
+cat("High AMR isolates:", sum(scores_df$Quadrant2 == "High AMR / Modified Baseline"), "\n")
+ 
+### 11. Identify mucA pangenome families and rank by prevalence
+biofilm_rows <- grepl("biofilm", pav$eggnog, ignore.case = TRUE)
+mucA_rows    <- biofilm_rows & gsub(" \\(biofilm\\)", "", pav$eggnog) == "mucA"
+cat("Number of mucA families:", sum(mucA_rows), "\n")
+ 
+mucA_family_counts <- data.frame(
+  Family    = pav$Gene[mucA_rows],
+  Frequency = rowSums(genome_cols_only[mucA_rows, ] != "" &
+                        !is.na(genome_cols_only[mucA_rows, ]))
+) %>% arrange(desc(Frequency))
+ 
+print(mucA_family_counts)
+ 
+### 12. Identify which isolates carry canonical vs minor allele mucA
+mucA_canonical_row  <- which(pav$Gene == "group_5251_vir_BF")
+mucA_minor_rows_all <- which(pav$Gene %in%
+                               mucA_family_counts$Family[
+                                 mucA_family_counts$Family != "group_5251_vir_BF"
+                               ])
+ 
+has_canonical <- colnames(genome_cols_only)[
+  genome_cols_only[mucA_canonical_row, ] != "" &
+    !is.na(genome_cols_only[mucA_canonical_row, ])
+]
+ 
+has_any_minor <- colnames(genome_cols_only)[
+  colSums(genome_cols_only[mucA_minor_rows_all, ] != "" &
+            !is.na(genome_cols_only[mucA_minor_rows_all, ])) > 0
+]
+ 
+### 13. Assign mucA group to each isolate
+scores_df$mucA_group <- ifelse(
+  scores_df$Isolate %in% has_canonical, "Canonical mucA",
+  ifelse(scores_df$Isolate %in% has_any_minor, "Minor allele mucA",
+         "No mucA detected")
+)
+ 
+cat("\nmucA group counts:\n")
+print(table(scores_df$mucA_group))
+ 
+### 14. Summarise acquired AMR burden by mucA group
+summary_by_mucA <- scores_df %>%
+  filter(mucA_group != "No mucA detected") %>%
+  group_by(mucA_group) %>%
+  summarise(
+    N                   = n(),
+    Mean_Acquired_AMR   = round(mean(Acquired_AMR, na.rm = TRUE), 2),
+    Median_Acquired_AMR = median(Acquired_AMR, na.rm = TRUE),
+    Pct_with_acquired   = round(mean(Acquired_AMR > 0) * 100, 1),
+    .groups = "drop"
+  )
+ 
+print(as.data.frame(summary_by_mucA))
+ 
+### 15. Statistical test — Fisher's exact test for acquired AMR presence/absence
+plot_df_mucA <- scores_df %>% filter(mucA_group != "No mucA detected")
+ 
+contingency_mucA <- table(
+  plot_df_mucA$mucA_group,
+  plot_df_mucA$Acquired_AMR > 0
+)
+print(contingency_mucA)
+fisher.test(contingency_mucA)
+ 
+### 16. Plot 1 — Boxplot: acquired AMR gene count by mucA group
+ggplot(plot_df_mucA, aes(x = mucA_group, y = Acquired_AMR, fill = mucA_group)) +
+  geom_jitter(aes(colour = mucA_group), width = 0.2, alpha = 0.3, size = 0.8) +
+  geom_boxplot(width = 0.3, outlier.shape = NA, alpha = 0.8) +
+  scale_fill_manual(values = c(
+    "Canonical mucA"    = "#2196F3",
+    "Minor allele mucA" = "#F44336"
+  )) +
+  scale_colour_manual(values = c(
+    "Canonical mucA"    = "#2196F3",
+    "Minor allele mucA" = "#F44336"
+  )) +
+  scale_y_continuous(expand = expansion(mult = c(0.02, 0.05))) +
+  theme_classic(base_size = 13) +
+  theme(legend.position = "none") +
+  labs(
+    title    = "Acquired AMR Gene Count by mucA Group",
+    subtitle = "Canonical (n=1215) vs Minor allele (n=150)",
+    x        = NULL,
+    y        = "Number of acquired AMR genes"
+  )
+ 
+ggsave("plot_mucA_acquired_AMR.png", width = 7, height = 6, dpi = 300)
+ 
+### 17. Plot 2 — Stacked bar chart: AST blind-spot classification by mucA group
+blind_spot_df_mucA <- plot_df_mucA %>%
+  group_by(mucA_group, Quadrant2) %>%
+  summarise(N = n(), .groups = "drop") %>%
+  group_by(mucA_group) %>%
+  mutate(Percent = round(N / sum(N) * 100, 1))
+ 
+ggplot(blind_spot_df_mucA, aes(x = mucA_group, y = Percent, fill = Quadrant2)) +
+  geom_bar(stat = "identity", width = 0.6) +
+  geom_text(aes(label = paste0(Percent, "%")),
+            position = position_stack(vjust = 0.5),
+            size = 4, colour = "white", fontface = "bold") +
+  scale_fill_manual(values = c(
+    "Pure AST Blind Spot (Core AMR Only)" = "#2196F3",
+    "High AMR / Modified Baseline"        = "#F44336"
+  )) +
+  scale_y_continuous(labels = function(x) paste0(x, "%"),
+                     expand = expansion(mult = c(0, 0.02))) +
+  theme_classic(base_size = 13) +
+  theme(legend.position = "bottom") +
+  labs(
+    title = "AST Blind Spot Classification by mucA Group",
+    x     = NULL,
+    y     = "% of isolates",
+    fill  = NULL
+  )
+ 
+ggsave("plot_mucA_blindspot.png", width = 7, height = 6, dpi = 300)
+ 
+### 18. Plot 3 — Stacked bar chart: proportion carrying acquired AMR genes by mucA group
+prop_df <- plot_df_mucA %>%
+  mutate(Has_Acquired = ifelse(Acquired_AMR > 0,
+                               "Has acquired AMR genes",
+                               "No acquired AMR genes")) %>%
+  group_by(mucA_group, Has_Acquired) %>%
+  summarise(N = n(), .groups = "drop") %>%
+  group_by(mucA_group) %>%
+  mutate(Percent = round(N / sum(N) * 100, 1))
+ 
+ggplot(prop_df, aes(x = mucA_group, y = Percent, fill = Has_Acquired)) +
+  geom_bar(stat = "identity", width = 0.6) +
+  geom_text(aes(label = paste0(Percent, "%")),
+            position = position_stack(vjust = 0.5),
+            size = 5, colour = "white", fontface = "bold") +
+  scale_fill_manual(values = c(
+    "Has acquired AMR genes" = "#F44336",
+    "No acquired AMR genes"  = "#2196F3"
+  )) +
+  scale_y_continuous(labels = function(x) paste0(x, "%"),
+                     expand = expansion(mult = c(0, 0.02))) +
+  theme_classic(base_size = 13) +
+  theme(legend.position = "bottom") +
+  labs(
+    title    = "Proportion of Isolates Carrying Acquired AMR Genes by mucA Group",
+    subtitle = "Canonical mucA (n=1215) vs Minor allele mucA (n=150)\nOR=0.07, p<2.2e-16 (Fisher's exact test)",
+    x        = NULL,
+    y        = "% of isolates",
+    fill     = NULL
+  )
+ 
+ggsave("plot_mucA_proportion.png", width = 7, height = 6, dpi = 300)
