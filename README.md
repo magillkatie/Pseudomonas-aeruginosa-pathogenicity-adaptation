@@ -1,2 +1,2 @@
-# Psuedomonas-aeruginosa-pathogenicity-adaptation
+# Pseudomonas-aeruginosa-pathogenicity-adaptation
 Lab Records
