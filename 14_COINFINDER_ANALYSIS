@@ -5,8 +5,8 @@
    This requires three sub‑stages:
    
    13.a – Build a maximum‑likelihood phylogenetic tree from the PyamilySeq core gene alignment  
-   13.b – Correct zero‑length branches to avoid division‑by‑zero errors in COINfinder  
-   13.c – Run COINfinder using the corrected tree and gene presence/absence matrix  
+   13.b – Correct zero‑length branches to avoid division‑by‑zero errors in COINfinder. 
+   13.c – Run COINfinder using the corrected tree and gene presence/absence matrix. 
 #STAGE 13.a
 # Purpose:
     Convert the PyamilySeq core gene alignment into a Newick-format phylogenetic tree using FastTree.
