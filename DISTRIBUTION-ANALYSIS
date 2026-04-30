@@ -1,0 +1,309 @@
+# DISTRIBUTION ANALYSIS — AMR, VIRULENCE & BIOFILM GENE CATEGORIES
+ 
+# Purpose:
+#    Characterise the pangenome distribution of AMR, virulence, and biofilm genes across P. aeruginosa isolates. 
+#    Determines whether each functional gene category is predominantly core (conserved) or accessory (variable)
+#    Includes:
+#      - Four-class pangenome classification (Core / Soft Core / Shell / Cloud)
+#      - Simplified binary classification (Core ≥95% vs Accessory <95%)
+#      - Per-category frequency distributions
+#      - Visualisations: stacked bar charts, frequency histograms, dot plots
+ 
+# Inputs:
+#    - Roary presence/absence matrix (gene_presence_absence_annotated.csv)
+#    - AMR genes annotated with suffix "_amr"
+#    - Virulence genes annotated with suffix "_vir"
+#    - Biofilm genes annotated in eggNOG as "geneName(biofilm)"
+ 
+# Outputs:
+#    - amr_df: per-family AMR gene frequencies and pangenome class
+#    - vir_df: per-family virulence gene frequencies and pangenome class
+#    - biofilm_union: per-unique-gene biofilm frequencies (union across families)
+#    - combined_df: all three categories combined for plotting
+#    - summary_table: count of genes per class per category
+#    - Plots:
+#        1. Stacked bar — four-class pangenome classification by category
+#        2. Frequency distribution histogram per category
+#        3. Stacked bar — core vs accessory (≥95% threshold) by category
+#        4. Dot plot — per-gene frequency by category with 95% core threshold line
+ 
+ 
+## SCRIPT
+ 
+### 0. Load libraries
+# library(dplyr)
+# library(tidyr)
+# library(ggplot2)
+ 
+### 1. Load data
+# pav <- read.csv("~/Downloads/gene_presence_absence_annotated.csv",
+#                 check.names = FALSE)
+ 
+### 2. Define genome (isolate) columns
+# Exclude all annotation columns — adjust if column names differ
+# non_genome_cols <- c("Gene", "Non-unique Gene name", "Annotation",
+#                      "No. isolates", "No. sequences",
+#                      "Avg sequences per isolate", "Genome Fragment",
+#                      "Order within Fragment", "Accessory Fragment",
+#                      "Accessory Order with Fragment", "QC",
+#                      "Min group size nuc", "Max group size nuc",
+#                      "Avg group size nuc", "eggnog", "GENE_TYPE")
+#
+# genome_cols_only <- pav[, !colnames(pav) %in% non_genome_cols, drop = FALSE]
+# cat("Total isolates:", ncol(genome_cols_only), "\n")
+# cat("Total gene rows:", nrow(genome_cols_only), "\n")
+ 
+### 3. Define four-class pangenome classification thresholds
+# n_isolates         <- ncol(genome_cols_only)
+# core_threshold     <- 0.99 * n_isolates
+# softcore_threshold <- 0.95 * n_isolates
+# shell_threshold    <- 0.15 * n_isolates
+#
+# classify_gene <- function(freq) {
+#   case_when(
+#     freq >= core_threshold     ~ "Core (>=99%)",
+#     freq >= softcore_threshold ~ "Soft Core (95-99%)",
+#     freq >= shell_threshold    ~ "Shell (15-95%)",
+#     TRUE                       ~ "Cloud (<15%)"
+#   )
+# }
+ 
+### 4. Calculate AMR gene frequencies and classify
+# amr_rows <- grepl("_amr$", pav$Gene, ignore.case = TRUE)
+# cat("AMR gene families:", sum(amr_rows), "\n")
+#
+# amr_freq <- rowSums(
+#   genome_cols_only[amr_rows, ] != "" &
+#     !is.na(genome_cols_only[amr_rows, ])
+# )
+#
+# amr_df <- data.frame(
+#   Gene      = pav$Gene[amr_rows],
+#   Category  = "AMR",
+#   Frequency = amr_freq,
+#   Percent   = round(amr_freq / n_isolates * 100, 1)
+# ) %>% mutate(PangenomeClass = classify_gene(Frequency))
+#
+# cat("\nAMR pangenome classification:\n")
+# print(table(amr_df$PangenomeClass))
+# print(round(prop.table(table(amr_df$PangenomeClass)) * 100, 1))
+ 
+### 5. Calculate virulence gene frequencies and classify
+# vir_rows <- grepl("_vir$", pav$Gene, ignore.case = TRUE)
+# cat("\nVirulence gene families:", sum(vir_rows), "\n")
+#
+# vir_freq <- rowSums(
+#   genome_cols_only[vir_rows, ] != "" &
+#     !is.na(genome_cols_only[vir_rows, ])
+# )
+#
+# vir_df <- data.frame(
+#   Gene      = pav$Gene[vir_rows],
+#   Category  = "Virulence",
+#   Frequency = vir_freq,
+#   Percent   = round(vir_freq / n_isolates * 100, 1)
+# ) %>% mutate(PangenomeClass = classify_gene(Frequency))
+#
+# cat("\nVirulence pangenome classification:\n")
+# print(table(vir_df$PangenomeClass))
+# print(round(prop.table(table(vir_df$PangenomeClass)) * 100, 1))
+ 
+### 6. Calculate biofilm gene frequencies (union across pangenome families)
+# Each unique biofilm gene name may span multiple pangenome families —
+# frequency is the number of isolates carrying at least one family copy
+# biofilm_rows       <- grepl("biofilm", pav$eggnog, ignore.case = TRUE)
+# biofilm_gene_names <- gsub(" \\(biofilm\\)", "", pav$eggnog[biofilm_rows])
+# unique_biofilm_genes <- unique(biofilm_gene_names)
+#
+# cat("\nBiofilm gene families:", sum(biofilm_rows), "\n")
+# cat("Unique biofilm genes:", length(unique_biofilm_genes), "\n")
+#
+# biofilm_union <- data.frame(Gene = unique_biofilm_genes) %>%
+#   rowwise() %>%
+#   mutate(
+#     Frequency = {
+#       gene_rows  <- biofilm_rows & gsub(" \\(biofilm\\)", "", pav$eggnog) == Gene
+#       if (sum(gene_rows) == 0) return(0L)
+#       sub_matrix <- genome_cols_only[gene_rows, , drop = FALSE]
+#       sum(colSums(sub_matrix != "" & !is.na(sub_matrix)) > 0)
+#     },
+#     Percent  = round(Frequency / n_isolates * 100, 1),
+#     Category = "Biofilm"
+#   ) %>%
+#   ungroup() %>%
+#   mutate(PangenomeClass = classify_gene(Frequency)) %>%
+#   arrange(desc(Frequency))
+#
+# cat("\nBiofilm pangenome classification:\n")
+# print(table(biofilm_union$PangenomeClass))
+# print(round(prop.table(table(biofilm_union$PangenomeClass)) * 100, 1))
+ 
+### 7. Combine all categories for plotting
+# combined_df <- bind_rows(
+#   amr_df[, c("Category", "Frequency", "Percent", "PangenomeClass")],
+#   vir_df[, c("Category", "Frequency", "Percent", "PangenomeClass")],
+#   biofilm_union[, c("Category", "Frequency", "Percent", "PangenomeClass")]
+# )
+#
+# combined_df$PangenomeClass <- factor(combined_df$PangenomeClass,
+#                                      levels = c("Core (>=99%)", "Soft Core (95-99%)",
+#                                                 "Shell (15-95%)", "Cloud (<15%)"))
+ 
+### 8. Summary table — gene counts per class per category
+# summary_table <- combined_df %>%
+#   group_by(Category, PangenomeClass) %>%
+#   summarise(N_Genes = n(), .groups = "drop") %>%
+#   pivot_wider(names_from = PangenomeClass, values_from = N_Genes, values_fill = 0)
+#
+# print(as.data.frame(summary_table))
+# cat("\nAMR gene families identified:", sum(amr_rows), "\n")
+# cat("Virulence gene families identified:", sum(vir_rows), "\n")
+# cat("Biofilm gene families identified:", sum(biofilm_rows), "\n")
+# cat("Unique biofilm genes (after collapsing families):", nrow(biofilm_union), "\n")
+ 
+### 9. Reclassify all categories as binary: Core (≥95%) vs Accessory (<95%)
+# amr_df <- amr_df %>%
+#   mutate(Class = ifelse(Percent >= 95, "Core (>=95%)", "Accessory (<95%)"))
+#
+# vir_df <- vir_df %>%
+#   mutate(Class = ifelse(Percent >= 95, "Core (>=95%)", "Accessory (<95%)"))
+#
+# biofilm_union <- biofilm_union %>%
+#   mutate(Class = ifelse(Percent >= 95, "Core (>=95%)", "Accessory (<95%)"))
+ 
+### 10. Check virulence gene frequency distribution
+# summary(vir_df$Percent)
+# cat("Virulence genes >95%:", sum(vir_df$Percent >= 95), "\n")
+# cat("Virulence genes 15-95%:", sum(vir_df$Percent >= 15 & vir_df$Percent < 95), "\n")
+# cat("Virulence genes <15%:", sum(vir_df$Percent < 15), "\n")
+ 
+### 11. Build binary proportion dataframe
+# prop_df <- bind_rows(
+#   amr_df %>% group_by(Category, Class) %>% summarise(N = n(), .groups = "drop"),
+#   vir_df %>% group_by(Category, Class) %>% summarise(N = n(), .groups = "drop"),
+#   biofilm_union %>% group_by(Category, Class) %>% summarise(N = n(), .groups = "drop")
+# ) %>%
+#   group_by(Category) %>%
+#   mutate(
+#     Total   = sum(N),
+#     Percent = round(N / Total * 100, 1)
+#   )
+#
+# print(as.data.frame(prop_df))
+ 
+### 12. Combine all genes with frequency for dot plot
+# all_genes_df <- bind_rows(
+#   amr_df[, c("Gene", "Category", "Percent")],
+#   vir_df[, c("Gene", "Category", "Percent")],
+#   biofilm_union[, c("Gene", "Category", "Percent")]
+# )
+ 
+### 13. Plot 1 — Stacked bar: four-class pangenome classification by category
+# prop_4class <- combined_df %>%
+#   group_by(Category, PangenomeClass) %>%
+#   summarise(N = n(), .groups = "drop") %>%
+#   group_by(Category) %>%
+#   mutate(Percent = round(N / sum(N) * 100, 1))
+#
+# ggplot(prop_4class, aes(x = Category, y = Percent, fill = PangenomeClass)) +
+#   geom_bar(stat = "identity", width = 0.6) +
+#   geom_text(aes(label = paste0(Percent, "%")),
+#             position = position_stack(vjust = 0.5),
+#             size = 4, colour = "white", fontface = "bold") +
+#   scale_fill_manual(values = c(
+#     "Core (>=99%)"       = "#1B5E20",
+#     "Soft Core (95-99%)" = "#66BB6A",
+#     "Shell (15-95%)"     = "#FFA726",
+#     "Cloud (<15%)"       = "#EF5350"
+#   )) +
+#   scale_y_continuous(labels = function(x) paste0(x, "%"),
+#                      expand = expansion(mult = c(0, 0.02))) +
+#   theme_classic(base_size = 13) +
+#   theme(legend.position = "bottom") +
+#   labs(
+#     title    = "Pangenome Classification of Functional Gene Categories",
+#     subtitle = paste0("Based on ", n_isolates, " P. aeruginosa isolates"),
+#     x        = NULL,
+#     y        = "% of genes",
+#     fill     = "Pangenome Class"
+#   )
+#
+# ggsave("plot_pangenome_classification.png", width = 8, height = 6, dpi = 300)
+ 
+### 14. Plot 2 — Frequency distribution histogram per category
+# ggplot(combined_df, aes(x = Percent, fill = Category)) +
+#   geom_histogram(binwidth = 5, colour = "white", alpha = 0.85) +
+#   facet_wrap(~Category, scales = "free_y") +
+#   scale_fill_manual(values = c(
+#     "AMR"       = "#9C27B0",
+#     "Virulence" = "#F44336",
+#     "Biofilm"   = "#2196F3"
+#   )) +
+#   scale_x_continuous(labels = function(x) paste0(x, "%")) +
+#   theme_classic(base_size = 13) +
+#   theme(legend.position = "none") +
+#   labs(
+#     title    = "Frequency Distribution of Functional Gene Categories",
+#     subtitle = "% of isolates carrying each gene",
+#     x        = "% isolates with gene present",
+#     y        = "Number of genes"
+#   )
+#
+# ggsave("plot_frequency_distribution.png", width = 10, height = 5, dpi = 300)
+ 
+### 15. Plot 3 — Stacked bar: core vs accessory (≥95% threshold) by category
+# ggplot(prop_df, aes(x = Category, y = Percent, fill = Class)) +
+#   geom_bar(stat = "identity", width = 0.6) +
+#   geom_text(aes(label = paste0(Percent, "%\n(n=", N, ")")),
+#             position = position_stack(vjust = 0.5),
+#             size = 4.5, colour = "white", fontface = "bold") +
+#   scale_fill_manual(values = c(
+#     "Core (>=95%)"     = "#1B5E20",
+#     "Accessory (<95%)" = "#EF5350"
+#   )) +
+#   scale_y_continuous(labels = function(x) paste0(x, "%"),
+#                      expand = expansion(mult = c(0, 0.02))) +
+#   scale_x_discrete(limits = c("Biofilm", "Virulence", "AMR")) +
+#   theme_classic(base_size = 13) +
+#   theme(
+#     legend.position = "bottom",
+#     plot.title      = element_text(size = 11, face = "bold"),
+#     plot.subtitle   = element_text(size = 9, colour = "grey40")
+#   ) +
+#   labs(
+#     title    = "Biofilm genes are conserved core genes; AMR and virulence genes are largely accessory",
+#     subtitle = paste0("Based on ", n_isolates, " P. aeruginosa isolates | Core defined as present in ≥95% isolates"),
+#     x        = NULL,
+#     y        = "% of genes in category",
+#     fill     = NULL
+#   )
+#
+# ggsave("plot_core_vs_accessory.png", width = 8, height = 6, dpi = 300)
+ 
+### 16. Plot 4 — Dot plot: per-gene frequency by category with 95% core threshold
+# ggplot(all_genes_df, aes(x = Category, y = Percent, colour = Category)) +
+#   geom_jitter(width = 0.25, alpha = 0.4, size = 1.8) +
+#   geom_hline(yintercept = 95, linetype = "dashed",
+#              colour = "grey30", linewidth = 0.7) +
+#   annotate("text", x = 0.6, y = 96.5, label = "95% core threshold",
+#            colour = "grey30", size = 3.5, hjust = 0) +
+#   scale_colour_manual(values = c(
+#     "AMR"       = "#9C27B0",
+#     "Biofilm"   = "#2196F3",
+#     "Virulence" = "#F44336"
+#   )) +
+#   scale_x_discrete(limits = c("Biofilm", "Virulence", "AMR")) +
+#   scale_y_continuous(labels = function(x) paste0(x, "%"),
+#                      limits = c(0, 105),
+#                      expand = expansion(mult = c(0.02, 0.02))) +
+#   theme_classic(base_size = 13) +
+#   theme(legend.position = "bottom") +
+#   labs(
+#     title    = "Biofilm genes are universally conserved across P. aeruginosa",
+#     subtitle = "Each dot represents one gene — AMR and virulence genes are largely rare and accessory",
+#     x        = NULL,
+#     y        = "% isolates with gene present",
+#     colour   = "Gene category"
+#   )
+#
+# ggsave("plot_gene_frequency_dotplot.png", width = 8, height = 6, dpi = 300)
